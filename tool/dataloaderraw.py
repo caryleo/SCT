@@ -16,8 +16,8 @@ preprocess = trn.Compose([
     trn.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-from tool.netcore import my_resnet
-import tool.resnet
+from misc.netcore import my_resnet
+import misc.resnet
 
 
 class DataLoaderRaw():
@@ -32,7 +32,7 @@ class DataLoaderRaw():
 
         # Load resnet
         self.cnn_model = opts.get('cnn_model', 'resnet101')
-        self.my_resnet = getattr(tool.resnet, self.cnn_model)()
+        self.my_resnet = getattr(misc.resnet, self.cnn_model)()
         self.my_resnet.load_state_dict(torch.load('./data/imagenet_weights/' + self.cnn_model + '.pth'))
         self.my_resnet = my_resnet(self.my_resnet)
         self.my_resnet.cuda()

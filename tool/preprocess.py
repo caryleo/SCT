@@ -1,13 +1,7 @@
-# !/usr/bin/env python3
-# -*- coding: UTF-8 -*-
-
 """
-FILENAME:       preprocess.py
-BY:             Gary 2019.3.14
-LAST MODIFIED:  2019.3.16
-DESCRIPTION:    preprocess core
+FILENAME:       PREPROCESS
+DESCRIPTION:    preprocess tools for captions and images
 """
-
 import json
 import logging
 import h5py
@@ -17,9 +11,10 @@ from PIL import Image
 import skimage.io
 import torch
 from torchvision import transforms
+import nltk
 
-import tool.netcore as netcore
-import tool.resnet as resnet
+import misc.netcore as netcore
+import misc.resnet as resnet
 
 
 def preprocess_captions(opts):
@@ -55,9 +50,9 @@ def preprocess_captions(opts):
     num_images = len(images)
     num_captions = sum(len(image["sentences"]) for image in images)
     dataset = inputs["dataset"]
-    logging.debug("Processing dataset: %s" % dataset)
-    logging.debug("Number of images recorded: %d" % num_images)
-    logging.debug("Number of captions recorded: %d" % num_captions)
+    logging.info("Processing dataset: %s" % dataset)
+    logging.info("Number of images loaded: %d" % num_images)
+    logging.info("Number of captions loaded: %d" % num_captions)
 
     # load word threshold and maximal sentence length
     word_threshold = opts.word_threshold
@@ -65,44 +60,58 @@ def preprocess_captions(opts):
     logging.info("Word occurrences threshold: %d" % word_threshold)
     logging.info("Maximal sentence length: %d" % max_sentence_length)
 
-    # count word occurrences and sentence length
-    occurrences = dict()
-    lengths = dict()
+    # count word occurrences, noun occurrences and sentence length
+    word_occurrences = dict()
+    sentence_lengths = dict()
+    noun_occurrences = dict()
     for image in images:
         for sentence in image["sentences"]:
             length = len(sentence["tokens"])
-            lengths[length] = lengths.get(length, 0) + 1
-            for word in sentence["tokens"]:
-                occurrences[word] = occurrences.get(word, 0) + 1
+            sentence_lengths[length] = sentence_lengths.get(length, 0) + 1
 
-    # DEBUG: sort it! big first!
-    ordered_occurrences = sorted([(times, word) for word, times in occurrences.items()], reverse=True)
-    logging.debug("Top 10 common words:\n" + "\n".join(map(str, ordered_occurrences[:10])))
+            tags = nltk.pos_tag(sentence["tokens"])
+            for tag in tags:
+                word_occurrences[tag[0]] = word_occurrences.get(tag[0], 0) + 1
+                if tag[1].startswith('N'):
+                    noun_occurrences[tag[0]] = noun_occurrences.get(tag[0], 0) + 1
+
+
+
+    # sort it! big first!
+    ordered_words = sorted([(times, word) for word, times in word_occurrences.items()], reverse=True)
+    logging.info("Top 10 common words:\n" +
+                 "\n".join(map(str, ordered_words[:10])))
+    ordered_nouns = sorted([(times, noun) for noun, times in noun_occurrences.items()], reverse=True)
+    logging.info("Top 10 common nouns:\n" +
+                 "\n".join((map(str, ordered_nouns[:10]))))
+
+    if opts.debug:
+        exit()
 
     # statistics about occurrences
-    sum_words = sum(occurrences.values())
+    sum_words = sum(word_occurrences.values())
     vocabulary = list()
     rare_words = list()
-    for word, times in occurrences.items():
+    for word, times in word_occurrences.items():
         if times <= word_threshold:
             rare_words.append(word)
         else:
             vocabulary.append(word)
 
-    sum_rare_words = sum(occurrences[word] for word in rare_words)
+    sum_rare_words = sum(word_occurrences[word] for word in rare_words)
     logging.info("Size of vocabulary: %d" % (len(vocabulary)))
     logging.info("Number of rare words: %d / %d (%.2f%%)" %
-                 (len(rare_words), len(occurrences), len(rare_words) * 100.0 / len(occurrences)))
+                 (len(rare_words), len(word_occurrences), len(rare_words) * 100.0 / len(word_occurrences)))
     logging.info("Number of UNK replacements: %d / %d (%.2f%%)" %
                  (sum_rare_words, sum_words, sum_rare_words * 100.0 / sum_words))
 
     # statistics about sentences length
-    max_length = max(lengths.keys())
-    sum_sentences = sum(lengths.values())
+    max_length = max(sentence_lengths.keys())
+    sum_sentences = sum(sentence_lengths.values())
     logging.info("Maximal sentence length: %d" % max_length)
     logging.debug("Distribution of sentence lengths (length | number | ratio):")
     for i in range(max_length + 1):
-        logging.debug("%2d | %7d | %2.5f%%" % (i, lengths.get(i, 0), lengths.get(i, 0) * 100.0 / sum_sentences))
+        logging.debug("%2d | %7d | %2.5f%%" % (i, sentence_lengths.get(i, 0), sentence_lengths.get(i, 0) * 100.0 / sum_sentences))
 
     # insect the token UNK
     if sum_rare_words > 0:
@@ -136,7 +145,7 @@ def preprocess_captions(opts):
             bcount += 1
             for pos, word in enumerate(sentence["tokens"]):
                 if pos < max_sentence_length:
-                    captions[tag, pos] = word_to_index[word] if occurrences[word] > word_threshold else word_to_index[
+                    captions[tag, pos] = word_to_index[word] if word_occurrences[word] > word_threshold else word_to_index[
                         "UNK"]
 
         array_captions.append(captions)

@@ -8,15 +8,13 @@ LAST MODIFIED:  2019.3.12
 DESCRIPTION:    eval core file
 """
 
-import logging
-
 from six.moves import cPickle
 
 import models
 from tool.dataloader import *
 from tool.dataloaderraw import *
 import eval_utils
-import tool.utils as utils
+import misc.utils as utils
 import torch
 
 

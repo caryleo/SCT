@@ -5,7 +5,7 @@ import numpy as np
 import json
 from json import encoder
 import os
-import tool.utils as utils
+import misc.utils as utils
 
 
 def language_eval(dataset, preds, model_id, split):

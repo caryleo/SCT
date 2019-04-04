@@ -18,7 +18,7 @@ import torch.optim as optim
 
 from tool.dataloader import DataLoader
 import models
-import tool.utils as utils
+import misc.utils as utils
 import eval_utils as eval_utils
 
 try:

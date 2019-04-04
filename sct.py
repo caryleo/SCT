@@ -6,7 +6,8 @@ import json
 import logging
 import torch
 
-from tool import options, preprocess
+from tool import preprocess
+from misc import options
 import train
 import eval
 
@@ -34,7 +35,7 @@ if __name__ == "__main__":
 
     # DEBUG: opts
     para = vars(opts)
-    logging.debug("Options input: \n" + json.dumps(para, indent=2))
+    logging.debug("Options input:\n" + json.dumps(para, indent=2))
 
     # cuda device
     device = torch.device("cuda:" + opts.cuda_device)
