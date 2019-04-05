@@ -18,17 +18,6 @@ import misc.resnet as resnet
 
 
 def preprocess_captions(opts):
-    """
-    According to the opts to set the options about the preprocessing for captions
-    Input json: the karpathy split
-    Output h5: All the captions vocab-indexed (captions), the length for each caption (caption_lengths) and
-        the start caption index (index_start) and end caption index (index_end) for each image
-    Output json: An array for information of all images, including split (split), filepath (filepath,
-        concatenating filename), coco image id (cocoid), and the width and height of the image if image
-        directory specified (width, height). As well as an array for the vocabulary (index_to_word).
-    :param opts: arguments
-    :return: None
-    """
     # load file path
     path_to_input_json = opts.input_caption_json
     path_to_output_json = opts.output_caption_json
@@ -62,96 +51,136 @@ def preprocess_captions(opts):
 
     # count word occurrences, noun occurrences and sentence length
     word_occurrences = dict()
+    word_count = 0
     sentence_lengths = dict()
     noun_occurrences = dict()
+    noun_count = 0
     for image in images:
         for sentence in image["sentences"]:
             length = len(sentence["tokens"])
             sentence_lengths[length] = sentence_lengths.get(length, 0) + 1
-
             tags = nltk.pos_tag(sentence["tokens"])
             for tag in tags:
                 word_occurrences[tag[0]] = word_occurrences.get(tag[0], 0) + 1
+                if word_occurrences[tag[0]] == 1:
+                    word_count += 1
                 if tag[1].startswith('N'):
                     noun_occurrences[tag[0]] = noun_occurrences.get(tag[0], 0) + 1
-
-
+                    if noun_occurrences[tag[0]] == 1:
+                        noun_count += 1
 
     # sort it! big first!
     ordered_words = sorted([(times, word) for word, times in word_occurrences.items()], reverse=True)
-    logging.info("Top 10 common words:\n" +
-                 "\n".join(map(str, ordered_words[:10])))
+    logging.debug("Top 10 common words:\n" +
+                  "\n".join(map(str, ordered_words[:10])))
     ordered_nouns = sorted([(times, noun) for noun, times in noun_occurrences.items()], reverse=True)
-    logging.info("Top 10 common nouns:\n" +
-                 "\n".join((map(str, ordered_nouns[:10]))))
-
-    if opts.debug:
-        exit()
+    logging.debug("Top 10 common nouns:\n" +
+                  "\n".join((map(str, ordered_nouns[:10]))))
 
     # statistics about occurrences
-    sum_words = sum(word_occurrences.values())
-    vocabulary = list()
-    rare_words = list()
+    word_sum = sum(word_occurrences.values())
+    vocabulary = list()  # all legal words
+    noun_sum = sum(noun_occurrences.values())
+    nouns = list()  # all legal nouns
+    rares = list()  # all illegal words
     for word, times in word_occurrences.items():
         if times <= word_threshold:
-            rare_words.append(word)
+            rares.append(word)
         else:
+            if word in noun_occurrences.keys():
+                nouns.append(word)
             vocabulary.append(word)
 
-    sum_rare_words = sum(word_occurrences[word] for word in rare_words)
-    logging.info("Size of vocabulary: %d" % (len(vocabulary)))
-    logging.info("Number of rare words: %d / %d (%.2f%%)" %
-                 (len(rare_words), len(word_occurrences), len(rare_words) * 100.0 / len(word_occurrences)))
-    logging.info("Number of UNK replacements: %d / %d (%.2f%%)" %
-                 (sum_rare_words, sum_words, sum_rare_words * 100.0 / sum_words))
+    rare_sum = sum(word_occurrences[rare] for rare in rares)
+    logging.info("Size of vocabulary: %d / %d (%.2f%%)" %
+                 (len(vocabulary), len(word_occurrences), len(vocabulary * 100.0 / len(word_occurrences))))
+    logging.info("Size of nouns: %d / %d (%.2f%%)" %
+                 (len(nouns), len(word_occurrences), len(nouns) * 100.0 / len(word_occurrences)))
+    logging.info("Number of nouns: %d / %d (%.2f%%)" %
+                 (noun_sum, word_sum, noun_sum * 100.0 / word_sum))
+    logging.info("Size of rares: %d / %d (%.2f%%)" %
+                 (len(rares), len(word_occurrences), len(rares) * 100.0 / len(word_occurrences)))
+    logging.info("Number of rares, or UNK replacements: %d / %d (%.2f%%)" %
+                 (rare_sum, word_sum, rare_sum * 100.0 / word_sum))
 
     # statistics about sentences length
-    max_length = max(sentence_lengths.keys())
-    sum_sentences = sum(sentence_lengths.values())
-    logging.info("Maximal sentence length: %d" % max_length)
+    sentence_max_length = max(sentence_lengths.keys())
+    sentence_sum = sum(sentence_lengths.values())
+    logging.info("Maximal sentence length: %d" % sentence_max_length)
     logging.debug("Distribution of sentence lengths (length | number | ratio):")
-    for i in range(max_length + 1):
-        logging.debug("%2d | %7d | %2.5f%%" % (i, sentence_lengths.get(i, 0), sentence_lengths.get(i, 0) * 100.0 / sum_sentences))
+    for i in range(sentence_max_length + 1):
+        logging.debug("%2d | %7d | %2.5f%%" %
+                      (i, sentence_lengths.get(i, 0), sentence_lengths.get(i, 0) * 100.0 / sentence_sum))
 
-    # insect the token UNK
-    if sum_rare_words > 0:
-        logging.info("Inserting the token UNK")
+    # insect the token UNK,
+    if rare_sum > 0:
+        logging.info("Threshold detected, inserting the token UNK")
         vocabulary.append("UNK")
+        nouns.append("UNK")
+        noun_occurrences["UNK"] = 0
 
-    # create mapping between index and word, 1-index
-    index_to_word = dict()
-    word_to_index = dict()
+    # NOTE::create mapping between index and word, as well as between index and noun, 1-indexed!!!
+    array_index_to_word = dict()
+    array_word_to_index = dict()
+
+    array_index_to_noun = dict()
+    array_noun_to_index = dict()
+
     for index, word in enumerate(vocabulary, start=1):
-        index_to_word[index] = word
-        word_to_index[word] = index
+        array_index_to_word[index] = word
+        array_word_to_index[word] = index
 
-    # encode all captions into a large array for h5 storage, 1-indexed
+    # NOTE::index for noun is independent
+    for index, noun in enumerate(nouns, start=1):
+        array_index_to_noun[index] = noun
+        array_noun_to_index[noun] = index
+
+    # NOTE: encode all captions into a large array for h5 storage, 1-indexed!!!
     logging.info("Encoding all captions into one array")
-    array_captions = list()
-    array_index_start = np.zeros(num_images, dtype='uint32')
-    array_index_end = np.zeros(num_images, dtype='uint32')
-    array_lengths = np.zeros(num_captions, dtype='uint32')
+    array_captions = list()  # indexed captions
+    array_index_start = np.zeros(num_images, dtype='uint32')  # start index of the image
+    array_index_end = np.zeros(num_images, dtype='uint32')  # end index of the image
+    array_lengths = np.zeros(num_captions, dtype='uint32')  # lengths of captions
 
-    # 0-indexed
-    bcount = 0
-    count = 1
+    # nouns specially
+    dict_nouns = dict()  # nouns for captions
+    dict_nouns_captions = dict()  # nouns for each caption
+
+    caption_count = 0  # for all captions, 0-indexed
+    caption_per_image_start = 1
     for index, image in enumerate(images):
-        num = len(image["sentences"])
-        assert num > 0, "No caption for this image???"
+        sentences_per_image_num = len(image["sentences"])
+        assert sentences_per_image_num > 0, "No caption for this image???"
 
-        captions = np.zeros((num, max_sentence_length), dtype='uint32')
+        captions_per_image = np.zeros((sentences_per_image_num, max_sentence_length), dtype='uint32')
+
         for tag, sentence in enumerate(image["sentences"]):
-            array_lengths[bcount] = min(max_sentence_length, len(sentence))
-            bcount += 1
-            for pos, word in enumerate(sentence["tokens"]):
-                if pos < max_sentence_length:
-                    captions[tag, pos] = word_to_index[word] if word_occurrences[word] > word_threshold else word_to_index[
-                        "UNK"]
+            array_lengths[caption_count] = min(max_sentence_length, len(sentence))
+            caption_count += 1
 
-        array_captions.append(captions)
-        array_index_start[index] = count
-        array_index_end[index] = count + num - 1
-        count += num
+            for pos, word in enumerate(sentence["tokens"]):
+                # trunk to max_length
+                if pos < max_sentence_length:
+                    if word not in rares:
+                        captions_per_image[tag, pos] = array_word_to_index[word]
+                        if word in nouns:
+                            # for every noun, store the caption index and position
+                            dict_nouns[word] = dict_nouns.get(word, []).append((caption_per_image_start + tag, pos))
+                            # for every caption, store the noun index and position
+                            dict_nouns_captions[caption_per_image_start + tag] = \
+                                dict_nouns_captions.get(caption_per_image_start + tag, [])\
+                                    .append(array_noun_to_index[word], pos)
+                    else:
+                        captions_per_image[tag, pos] = array_word_to_index["UNK"]
+                        dict_nouns["UNK"] = dict_nouns.get("UNK", []).append((caption_per_image_start + tag, pos))
+                        dict_nouns_captions[caption_per_image_start + tag] = \
+                            dict_nouns_captions.get(caption_per_image_start + tag, [])\
+                                .append(array_noun_to_index["UNK"], pos)
+
+        array_captions.append(captions_per_image)
+        array_index_start[index] = caption_per_image_start
+        array_index_end[index] = caption_per_image_start + sentences_per_image_num - 1
+        caption_per_image_start += sentences_per_image_num
 
     # concatenate together
     all_captions = np.concatenate(array_captions, axis=0)
@@ -160,7 +189,7 @@ def preprocess_captions(opts):
     assert np.all(array_lengths > 0), "Some captions have no words???"
     logging.info("Encode all captions into one array complete")
 
-    # create the h5 file
+    # create the h5 file, not including the new nouns structures
     logging.info("Creating h5 file: %s" % path_to_output_h5)
     output_h5 = h5py.File(path_to_output_h5, 'w')
     output_h5.create_dataset("captions", dtype='uint32', data=all_captions)
@@ -173,7 +202,7 @@ def preprocess_captions(opts):
     # create the json file
     logging.info("Creating json file: %s" % path_to_output_json)
     output_json = dict()
-    output_json["index_to_word"] = index_to_word
+    output_json["index_to_word"] = array_index_to_word
     output_json["images"] = list()
 
     if image_root == "":

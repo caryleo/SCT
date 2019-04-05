@@ -33,9 +33,9 @@ if __name__ == "__main__":
                           datefmt='%Y.%m.%d-%H:%M:%S'))
     logging.getLogger('').addHandler(console)
 
-    # DEBUG: opts
+    # opts
     para = vars(opts)
-    logging.debug("Options input:\n" + json.dumps(para, indent=2))
+    logging.debug("Options input: \n" + json.dumps(para, indent=2))
 
     # cuda device
     device = torch.device("cuda:" + opts.cuda_device)
