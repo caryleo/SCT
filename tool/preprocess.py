@@ -164,9 +164,11 @@ def preprocess_captions(opts):
                     if word not in rares:
                         captions_per_image[tag, pos] = array_word_to_index[word]
                         if word in nouns:
-                            # for every noun, store the caption index and position
-                            dict_nouns[word] = dict_nouns.get(word, []).append((caption_per_image_start + tag, pos))
-                            # for every caption, store the noun index and position
+                            # for every noun, store the caption index and position (noun index to caption index & pos)
+                            dict_nouns[array_noun_to_index[word]] =\
+                                dict_nouns.get(array_noun_to_index[word], [])\
+                                    .append((caption_per_image_start + tag, pos))
+                            # for every caption, store the noun index and position (caption index to noun index & pos)
                             dict_nouns_captions[caption_per_image_start + tag] = \
                                 dict_nouns_captions.get(caption_per_image_start + tag, [])\
                                     .append(array_noun_to_index[word], pos)
@@ -184,7 +186,7 @@ def preprocess_captions(opts):
 
     # concatenate together
     all_captions = np.concatenate(array_captions, axis=0)
-    logging.debug("Size of the captions array: " + str(all_captions.shape))
+    logging.info("Size of the captions array: " + str(all_captions.shape))
     assert all_captions.shape[0] == num_captions, "Numbers are not matched, something is wrong???"
     assert np.all(array_lengths > 0), "Some captions have no words???"
     logging.info("Encode all captions into one array complete")
@@ -192,9 +194,13 @@ def preprocess_captions(opts):
     # create the h5 file, not including the new nouns structures
     logging.info("Creating h5 file: %s" % path_to_output_h5)
     output_h5 = h5py.File(path_to_output_h5, 'w')
+    logging.info("Writing encoded captions")
     output_h5.create_dataset("captions", dtype='uint32', data=all_captions)
+    logging.info("Writing start index for every image in array captions")
     output_h5.create_dataset("index_start", dtype='uint32', data=array_index_start)
+    logging.info("Writing end index for every image in array captions")
     output_h5.create_dataset("index_end", dtype='uint32', data=array_index_end)
+    logging.info("Writing lengths for every caption")
     output_h5.create_dataset("caption_lengths", dtype='uint32', data=array_lengths)
     output_h5.close()
     logging.info("Create h5 file complete")
@@ -202,9 +208,17 @@ def preprocess_captions(opts):
     # create the json file
     logging.info("Creating json file: %s" % path_to_output_json)
     output_json = dict()
+    logging.info("Writing word index")
     output_json["index_to_word"] = array_index_to_word
-    output_json["images"] = list()
+    logging.info("Writing noun index")
+    output_json["index_to_noun"] = array_index_to_noun
+    logging.info("Writing nouns in captions, each entry has a list of captions and corresponding position")
+    output_json["nouns_in_captions"] = dict_nouns
+    logging.info("Writing captions for nouns , each entry has a list of nouns and corresponding position")
+    output_json["captions_for_nouns"] = dict_nouns_captions
 
+    logging.info("Writing image info")
+    output_json["images"] = list()
     if image_root == "":
         logging.warning("No image root specified, width and height will not be stored")
 
@@ -225,16 +239,6 @@ def preprocess_captions(opts):
 
 
 def preprocess_features(opts, device):
-    """
-    According to the opts to set the options about the preprocessing for features
-    Input json: the karpathy split
-    Output h5: 2 h5 files, one is for fc features and the other is for att feature, each image has a dataset, whose name
-        is its cocoid, storing its features extracted by resnet. dimension of fc features is (2048, ), while dimension
-        of att features is (att, att, 2048
-    :param opts: arguments
-    :param device: cuda device
-    :return: None
-    """
     # load file path
     path_to_input_json = opts.input_caption_json
     directory_of_output = opts.output_feature_directory
