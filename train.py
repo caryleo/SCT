@@ -16,9 +16,10 @@ from six.moves import cPickle
 import torch
 import torch.optim as optim
 
+import utils.Loss
 from tool.dataloader import DataLoader
 import models
-import misc.utils as utils
+import utils.utils as utils
 import eval_utils as eval_utils
 
 try:
@@ -32,9 +33,9 @@ def add_summary_value(writer, key, value, iteration):
     summary = tf.Summary(value=[tf.Summary.Value(tag=key, simple_value=value)])
     writer.add_summary(summary, iteration)
 
-
 def train(opts, device):
     # load data
+    logging.info("STAGE 0: Loading data")
     logging.info("Loading data")
     loader = DataLoader(opts)
     logging.info("Load data complete")
@@ -50,7 +51,6 @@ def train(opts, device):
     history = dict()
     if opts.start_from is not None:
         logging.info("Starting from checkpoint")
-
         # open old info and check if models are compatible
         with open(os.path.join(opts.start_from, 'info_' + opts.train_id + '.pkl'), 'rb') as info_file:
             info = cPickle.load(info_file)
@@ -59,13 +59,10 @@ def train(opts, device):
             for entry in entries:
                 assert vars(saved_model_opts)[entry] == vars(opts)[
                     entry], "Command line argument and saved model disagree on '%s' " % entry
-
         if os.path.isfile(os.path.join(opts.start_from, 'history_' + opts.train_id + '.pkl')):
             with open(os.path.join(opts.start_from, 'history_' + opts.train_id + '.pkl'), 'rb') as history_file:
                 history = cPickle.load(history_file)
-
         logging.info("Load checkpoint complete")
-
     # load iter and epoch from info_file
     iteration = info.get('iter', 0)
     epoch = info.get('epoch', 0)
@@ -75,7 +72,6 @@ def train(opts, device):
     loss_history = history.get('loss_history', dict())
     lr_history = history.get('lr_history', dict())
     ss_prob_history = history.get('ss_prob_history', dict())
-
     val_result_history = history.get('val_result_history', dict())
 
     # load iterators, split_index and best score (if existing), or use the dataloader
@@ -92,14 +88,14 @@ def train(opts, device):
     # Assure in training mode
     model.train()
 
-    criterion = utils.LanguageModelCriterion()
-
+    criterion = utils.Loss.LanguageModelCriterion()
     optimizer = optim.Adam(model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay)
 
     # Load the optimizer
     if vars(opts).get('start_from', None) is not None:
         optimizer.load_state_dict(torch.load(os.path.join(opts.start_from, 'optimizer.pth')))
 
+    logging.info("STAGE 1: Training language model")
     logging.info("Start training")
     while True:
         # update learning rate, including lr_decay and schedule_sample
@@ -308,3 +304,7 @@ def train(opts, device):
 
     logging.info("validation complete")
     logging.info("training complete")
+
+    logging.info("STAGE 2: Extracting memory")
+
+    logging.info("STAGE 3: Training relation model")

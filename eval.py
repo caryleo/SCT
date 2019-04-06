@@ -11,10 +11,11 @@ DESCRIPTION:    eval core file
 from six.moves import cPickle
 
 import models
+import utils.Loss
 from tool.dataloader import *
 from tool.dataloaderraw import *
 import eval_utils
-import misc.utils as utils
+import utils.utils as utils
 import torch
 
 
@@ -65,7 +66,7 @@ def evaluation(opts, device):
         parameter.to(device=device)
 
     model.eval()
-    criterion = utils.LanguageModelCriterion()
+    criterion = utils.Loss.LanguageModelCriterion()
     criterion.to(device=device)
 
     # Create the Data Loader instance

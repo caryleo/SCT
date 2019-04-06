@@ -32,6 +32,12 @@ class DataLoader(data.Dataset):
     def get_vocab(self):
         return self.index_to_word
 
+    def get_nouns_size(self):
+        return self.nouns_size
+
+    def get_nouns(self):
+        return self.index_to_noun
+
     def get_seq_length(self):
         return self.max_caption_length
 
@@ -43,7 +49,7 @@ class DataLoader(data.Dataset):
 
     def get_data(self, ix):
         self.read_files()
-        index = str(self.image_info['images'][ix]['cocoid'])
+        index = str(self.input_info_json['images'][ix]['cocoid'])
         return (np.array(self.feats_fc[index]).astype('float32'),
                 np.array(self.feats_att[index]).astype('float32'), ix)
 
@@ -57,10 +63,15 @@ class DataLoader(data.Dataset):
 
         # load json file which contains additional information about dataset
         logging.info('Loading input json file: %s' % opts.input_json)
-        self.image_info = json.load(open(self.opts.input_json))
-        self.index_to_word = self.image_info['index_to_word']
+        self.input_info_json = json.load(open(self.opts.input_json))
+        self.index_to_word = self.input_info_json['index_to_word']
+        self.index_to_noun = self.input_info_json["index_to_noun"]
+        self.dict_nouns = self.input_info_json["nouns_in_capions"]
+        self.dict_nouns_captions = self.input_info_json["captions_for_nouns"]
         self.vocabulary_size = len(self.index_to_word)
+        self.nouns_size = len(self.index_to_noun)
         logging.info('Size of vocabulary: %d' % self.vocabulary_size)
+        logging.info('Size of noun: %d', self.nouns_size)
         logging.info('Load input json file complete')
 
         # load the captions h5 with memory mapping
@@ -78,8 +89,8 @@ class DataLoader(data.Dataset):
         # separate out indexes for each of the provided splits
         logging.info("Spliting into 3 datasets")
         self.split_index = {'train': list(), 'val': list(), 'test': list()}
-        for index in range(len(self.image_info['images'])):
-            image = self.image_info['images'][index]
+        for index in range(len(self.input_info_json['images'])):
+            image = self.input_info_json['images'][index]
             if image['split'] == 'train':
                 self.split_index['train'].append(index)
             elif image['split'] == 'val':
@@ -163,8 +174,8 @@ class DataLoader(data.Dataset):
 
             # record associated info as well
             info_dict = {'index': ix,
-                         'id': self.image_info['images'][ix]['cocoid'],
-                         'file_path': self.image_info['images'][ix]['filepath']}
+                         'id': self.input_info_json['images'][ix]['cocoid'],
+                         'file_path': self.input_info_json['images'][ix]['filepath']}
             info.append(info_dict)
 
         # generate mask
@@ -195,7 +206,7 @@ class DataLoader(data.Dataset):
         return self.get_data(ix)
 
     def __len__(self):
-        return len(self.image_info['images'])
+        return len(self.input_info_json['images'])
 
 
 # 后面的部分看不懂 =============================================================================

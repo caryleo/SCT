@@ -13,8 +13,8 @@ import torch
 from torchvision import transforms
 import nltk
 
-import misc.netcore as netcore
-import misc.resnet as resnet
+import utils.netcore as netcore
+import utils.resnet as resnet
 
 
 def preprocess_captions(opts):
@@ -217,7 +217,7 @@ def preprocess_captions(opts):
     logging.info("Writing captions for nouns , each entry has a list of nouns and corresponding position")
     output_json["captions_for_nouns"] = dict_nouns_captions
 
-    logging.info("Writing image info")
+    logging.info("Writing image info ")
     output_json["images"] = list()
     if image_root == "":
         logging.warning("No image root specified, width and height will not be stored")
