@@ -11,7 +11,7 @@ DESCRIPTION:    reads arguments from the command line
 import argparse
 
 
-def parse_arg_elka():
+def parse_arg():
     parser = argparse.ArgumentParser(description="SCT PROTO V1 #ELKA")
 
     # core mode

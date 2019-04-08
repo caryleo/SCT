@@ -79,7 +79,7 @@ class DataLoader(data.Dataset):
         self.captions_h5 = h5py.File(self.opts.input_captions_h5, 'r', driver='core')
         captions_size = self.captions_h5['captions'].shape
         self.max_caption_length = captions_size[1]
-        logging.debug("Caption length: %d" % self.max_caption_length)
+        logging.debug("Maximal Caption length: %d" % self.max_caption_length)
         self.index_start = self.captions_h5['index_start'][:]
         self.index_end = self.captions_h5['index_end'][:]
         self.caption_length = self.captions_h5['caption_lengths'][:]
