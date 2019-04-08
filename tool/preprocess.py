@@ -95,7 +95,7 @@ def preprocess_captions(opts):
 
     rare_sum = sum(word_occurrences[rare] for rare in rares)
     logging.info("Size of vocabulary: %d / %d (%.2f%%)" %
-                 (len(vocabulary), len(word_occurrences), len(vocabulary * 100.0 / len(word_occurrences))))
+                 (len(vocabulary), len(word_occurrences), len(vocabulary * 100.0) / len(word_occurrences)))
     logging.info("Size of nouns: %d / %d (%.2f%%)" %
                  (len(nouns), len(word_occurrences), len(nouns) * 100.0 / len(word_occurrences)))
     logging.info("Number of nouns: %d / %d (%.2f%%)" %
