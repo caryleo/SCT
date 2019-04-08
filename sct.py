@@ -38,7 +38,7 @@ if __name__ == "__main__":
     logging.debug("Options input: \n" + json.dumps(para, indent=2))
 
     # cuda device
-    device = torch.device("cuda:" + opts.cuda_device)
+    device = torch.device("cuda:" + str(opts.cuda_device))
     logging.info("Device Using: %s " % device.__str__())
 
     # check mode
