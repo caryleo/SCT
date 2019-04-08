@@ -173,7 +173,7 @@ def preprocess_captions(opts):
                             # for every caption, store the noun index and position (caption index to noun index & pos)
                             dict_nouns_captions[caption_per_image_start + tag] = \
                                 dict_nouns_captions.get(caption_per_image_start + tag, [])\
-                                    .append(array_noun_to_index[word], pos)
+                                    .append((array_noun_to_index[word], pos))
                     else:
                         captions_per_image[tag, pos] = array_word_to_index["UNK"]
                         dict_nouns["UNK"] = dict_nouns.get("UNK", []).append((caption_per_image_start + tag, pos))
