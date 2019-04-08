@@ -59,7 +59,9 @@ def preprocess_captions(opts):
         for sentence in image["sentences"]:
             length = len(sentence["tokens"])
             sentence_lengths[length] = sentence_lengths.get(length, 0) + 1
+            logging.debug(sentence["tokens"])
             tags = nltk.pos_tag(sentence["tokens"])
+            logging.debug(tags)
             for tag in tags:
                 word_occurrences[tag[0]] = word_occurrences.get(tag[0], 0) + 1
                 if word_occurrences[tag[0]] == 1:
