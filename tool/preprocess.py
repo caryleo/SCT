@@ -167,19 +167,17 @@ def preprocess_captions(opts):
                         captions_per_image[tag, pos] = array_word_to_index[word]
                         if word in nouns:
                             # for every noun, store the caption index and position (noun index to caption index & pos)
-                            dict_nouns[array_noun_to_index[word]] =\
-                                dict_nouns.get(array_noun_to_index[word], [])\
-                                    .append((caption_per_image_start + tag, pos))
+                            dict_nouns[array_noun_to_index[word]] = dict_nouns.get(array_noun_to_index[word], [])
+                            dict_nouns[array_noun_to_index[word]].append((caption_per_image_start + tag, pos))
                             # for every caption, store the noun index and position (caption index to noun index & pos)
-                            dict_nouns_captions[caption_per_image_start + tag] = \
-                                dict_nouns_captions.get(caption_per_image_start + tag, [])\
-                                    .append((array_noun_to_index[word], pos))
+                            dict_nouns_captions[caption_per_image_start + tag] = dict_nouns_captions.get(caption_per_image_start + tag, [])
+                            dict_nouns_captions[caption_per_image_start + tag].append((array_noun_to_index[word], pos))
                     else:
                         captions_per_image[tag, pos] = array_word_to_index["UNK"]
-                        dict_nouns["UNK"] = dict_nouns.get("UNK", []).append((caption_per_image_start + tag, pos))
-                        dict_nouns_captions[caption_per_image_start + tag] = \
-                            dict_nouns_captions.get(caption_per_image_start + tag, [])\
-                                .append(array_noun_to_index["UNK"], pos)
+                        dict_nouns["UNK"] = dict_nouns.get("UNK", [])
+                        dict_nouns["UNK"].append((caption_per_image_start + tag, pos))
+                        dict_nouns_captions[caption_per_image_start + tag] = dict_nouns_captions.get(caption_per_image_start + tag, [])
+                        dict_nouns_captions[caption_per_image_start + tag].append(array_noun_to_index["UNK"], pos)
 
         array_captions.append(captions_per_image)
         array_index_start[index] = caption_per_image_start
