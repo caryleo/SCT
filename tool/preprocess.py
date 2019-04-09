@@ -177,7 +177,7 @@ def preprocess_captions(opts):
                         dict_nouns["UNK"] = dict_nouns.get("UNK", [])
                         dict_nouns["UNK"].append((caption_per_image_start + tag, pos))
                         dict_nouns_captions[caption_per_image_start + tag] = dict_nouns_captions.get(caption_per_image_start + tag, [])
-                        dict_nouns_captions[caption_per_image_start + tag].append(array_noun_to_index["UNK"], pos)
+                        dict_nouns_captions[caption_per_image_start + tag].append((array_noun_to_index["UNK"], pos))
 
         array_captions.append(captions_per_image)
         array_index_start[index] = caption_per_image_start
