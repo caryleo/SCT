@@ -50,18 +50,19 @@ def preprocess_captions(opts):
     logging.info("Maximal sentence length: %d" % max_sentence_length)
 
     # count word occurrences, noun occurrences and sentence length
+    logging.info("Counting occurrences of words and nouns")
     word_occurrences = dict()
     word_count = 0
     sentence_lengths = dict()
     noun_occurrences = dict()
     noun_count = 0
-    for image in images:
+    for count, image in enumerate(images, start=1):
         for sentence in image["sentences"]:
             length = len(sentence["tokens"])
             sentence_lengths[length] = sentence_lengths.get(length, 0) + 1
-            logging.debug(sentence["tokens"])
+            # logging.debug(sentence["tokens"])
             tags = nltk.pos_tag(sentence["tokens"])
-            logging.debug(tags)
+            # logging.debug(tags)
             for tag in tags:
                 word_occurrences[tag[0]] = word_occurrences.get(tag[0], 0) + 1
                 if word_occurrences[tag[0]] == 1:
@@ -70,6 +71,8 @@ def preprocess_captions(opts):
                     noun_occurrences[tag[0]] = noun_occurrences.get(tag[0], 0) + 1
                     if noun_occurrences[tag[0]] == 1:
                         noun_count += 1
+        if count % 1000 == 0:
+            logging.info("%d images complete" % count)
 
     # sort it! big first!
     ordered_words = sorted([(times, word) for word, times in word_occurrences.items()], reverse=True)
@@ -183,6 +186,9 @@ def preprocess_captions(opts):
         array_index_start[index] = caption_per_image_start
         array_index_end[index] = caption_per_image_start + sentences_per_image_num - 1
         caption_per_image_start += sentences_per_image_num
+
+        if (index + 1) % 1000 == 0:
+            logging.info("%d images complete" % (index + 1))
 
     # concatenate together
     all_captions = np.concatenate(array_captions, axis=0)
