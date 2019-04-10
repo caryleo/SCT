@@ -21,7 +21,7 @@ if __name__ == "__main__":
         format='%(asctime)s**%(levelname)s\t%(message)s',
         datefmt='%Y.%m.%d-%H:%M:%S',
         filename='sct.log',
-        filemode='a'
+        filemode='w'
     )
     console = logging.StreamHandler()
     if opts.debug:

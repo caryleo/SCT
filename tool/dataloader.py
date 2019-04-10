@@ -20,6 +20,7 @@ import multiprocessing
 
 class DataLoader(data.Dataset):
 
+    # 重置迭代器，从头新建一个取数据子线程
     def reset_iterator(self, split):
         del self._prefetch_process[split]
         self._prefetch_process[split] = BlobFetcher(split,
@@ -36,7 +37,7 @@ class DataLoader(data.Dataset):
         return self.nouns_size
 
     def get_nouns(self):
-        return self.index_to_noun
+        return self.noun_to_index
 
     def get_seq_length(self):
         return self.max_caption_length
@@ -65,11 +66,12 @@ class DataLoader(data.Dataset):
         logging.info('Loading input json file: %s' % opts.input_json)
         self.input_info_json = json.load(open(self.opts.input_json))
         self.index_to_word = self.input_info_json['index_to_word']
-        self.index_to_noun = self.input_info_json["index_to_noun"]
+        self.noun_to_index = self.input_info_json["noun_to_index"]
+        self.nouns_indices = self.input_info_json["nouns_indices"]
         self.dict_nouns = self.input_info_json["nouns_in_capions"]
         self.dict_nouns_captions = self.input_info_json["captions_for_nouns"]
         self.vocabulary_size = len(self.index_to_word)
-        self.nouns_size = len(self.index_to_noun)
+        self.nouns_size = len(self.nouns_indices)
         logging.info('Size of vocabulary: %d' % self.vocabulary_size)
         logging.info('Size of noun: %d', self.nouns_size)
         logging.info('Load input json file complete')
@@ -106,17 +108,16 @@ class DataLoader(data.Dataset):
 
         self.iterators = {'train': 0, 'val': 0, 'test': 0}
 
-        # 这部分是预取特征的操作，目前看不懂
+        # 针对三个split分别创建一个取数据的进程
         self._prefetch_process = {}  # The three prefetch process
         for split in self.iterators.keys():
             self._prefetch_process[split] = BlobFetcher(split,
                                                         self,
                                                         split == 'train')
 
-        # Terminate the child process when the parent exists
-
+        # Terminate the child process when the parent exists 在主进程退出时，终止所有的子进程
         def cleanup():
-            logging.info('Terminating BlobFetcher')
+            # logging.info('Terminating BlobFetcher')
             for split in self.iterators.keys():
                 del self._prefetch_process[split]
 
@@ -129,23 +130,26 @@ class DataLoader(data.Dataset):
 
         fc_batch = list()
         att_batch = list()
+        # 注意这里，句子长度多了两位
         caption_batch = np.zeros(
             [batch_size * caps_per_img, self.max_caption_length + 2], dtype='int')
         mask_batch = np.zeros(
             [batch_size * caps_per_img, self.max_caption_length + 2], dtype='float32')
 
+        # 这个变量用于判断一次是否已经到头
         wrapped = False
 
         info = list()
         gts = list()
 
+        # 每一次返回，batch_size次调用
         for i in range(batch_size):
-            # fetch image
+            # fetch image 取一次是取一个图片的fc和att特征， 为了方便对齐，直接复制5份
             feat_fc, feat_att, ix, tmp_wrapped = self._prefetch_process[split].get()
             fc_batch += [feat_fc] * caps_per_img
             att_batch += [feat_att] * caps_per_img
 
-            # fetch the sequence labels
+            # fetch the sequence labels 因为索引定位是从1开始的，需要减1
             index1 = self.index_start[ix] - 1  # label_start_ix starts from 1
             index2 = self.index_end[ix] - 1
             num_cap = index2 - index1 + 1  # number of captions available for this image
@@ -153,41 +157,45 @@ class DataLoader(data.Dataset):
             assert num_cap > 0, 'an image does not have any caption.'
 
             if num_cap < caps_per_img:
-                # we need to subsample (with replacement)
+                # we need to subsample (with replacement), 如果实际对应的描述量不够制定的描述量，需要采样补足
                 caps = np.zeros([caps_per_img, self.max_caption_length], dtype='int')
                 for q in range(caps_per_img):
                     ixl = random.randint(index1, index2)
                     caps[q, :] = self.captions_h5['captions'][ixl, :self.max_caption_length]
             else:
+                # 如果多了，就取够就好
                 ixl = random.randint(index1, index2 - caps_per_img + 1)
                 caps = self.captions_h5['captions'][ixl: ixl + caps_per_img, :self.max_caption_length]
-            # put the caption in the middle: [0] is 0 and [max_length+1] is 0
+
+            # put the caption in the middle: [0] is 0 and [max_length+1] is 0 把整个描述放到中间，前后补0，实际上充当BOS和EOS
             caption_batch[i * caps_per_img: (i + 1) * caps_per_img, 1: self.max_caption_length + 1] = caps
 
             if tmp_wrapped:
                 wrapped = True
 
-            # Used for reward evaluation, indices are 1-indexed
+            # Used for reward evaluation, indices are 1-indexed 取出参考描述
             gts.append(
                 self.captions_h5['captions'][self.index_start[ix] - 1:
                                              self.index_end[ix]])
 
-            # record associated info as well
+            # record associated info as well 信息块保存的 image的索引，图片的COCOID，以及路径
             info_dict = {'index': ix,
                          'id': self.input_info_json['images'][ix]['cocoid'],
                          'file_path': self.input_info_json['images'][ix]['filepath']}
             info.append(info_dict)
 
-        # generate mask
+        # generate mask 生成掩模，明确有意义的位（代替长度记录，更方便一下额）
         nonzeros = np.array(list(map(lambda x: (x != 0).sum() + 2, caption_batch)))
         for ix, row in enumerate(mask_batch):
             row[:nonzeros[ix]] = 1
 
+        # 一次batch的全部数据如下：fc特征扩展batch，att特征扩展batch，描述batch，从参考描述batch，掩模batch，当前split的迭代边界，上面有关image的信息块
         data_all = {'fc_feats': np.stack(fc_batch),
                     'att_feats': np.stack(att_batch),
                     'captions': caption_batch,
                     'gts': gts,
                     'masks': mask_batch,
+                    # bounds用于明确边界
                     'bounds': {'it_pos_now': self.iterators[split],
                                'it_max': len(self.split_index[split]),
                                'wrapped': wrapped},
@@ -209,7 +217,7 @@ class DataLoader(data.Dataset):
         return len(self.input_info_json['images'])
 
 
-# 后面的部分看不懂 =============================================================================
+# 子集随机采样，因为需要对整个数据库重新划分一下，因此是取的索引的子集，这里直接把随机采样的定义为序列采样（可以考虑修改一下）
 class ArraySampler(data.sampler.SubsetRandomSampler):
     def __iter__(self):
         return iter(self.indices)
@@ -225,7 +233,7 @@ class BlobFetcher:
         """
         self.split = split
         self.dataloader = dataloader
-        self.if_shuffle = if_shuffle
+        self.if_shuffle = if_shuffle  # 根据源代码，只对train集做shuffle
 
     # Add more in the queue
     def reset(self):
@@ -237,6 +245,7 @@ class BlobFetcher:
          the get_minibatch_inds already.
         """
         # batch_size is 0, the merge is done in DataLoader class
+        # sampler 从当前split的当前iterator开始采样， 这里batchsize是1，因为他v把构造batch的过程放到了loader里面
         sampler = ArraySampler(
             self.dataloader.split_index[self.split][self.dataloader.iterators[self.split]:])
         self.split_loader = iter(
@@ -260,19 +269,19 @@ class BlobFetcher:
             ri_next = 0
             if self.if_shuffle:
                 random.shuffle(self.dataloader.split_index[self.split])
-            wrapped = True
+            wrapped = True  # epoch结束的标记
         self.dataloader.iterators[self.split] = ri_next
 
         return ix, wrapped
 
     def get(self):
         if not hasattr(self, 'split_loader'):
-            self.reset()
+            self.reset()  # 没有split_loader，新建一个
 
         ix, wrapped = self._get_next_minibatch_inds()
         tmp = self.split_loader.next()
         if wrapped:
-            self.reset()
+            self.reset()  # 新的epoch，新建一个
         assert tmp[2] == ix, "index not equal"
 
         return tmp + [wrapped]

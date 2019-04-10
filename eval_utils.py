@@ -60,7 +60,7 @@ def eval_split(model, crit, loader, eval_kwargs={}):
     logging.info("Evaluating by device: %s", device)
     # Make sure in the evaluation mode
     model.eval()
-
+    # 每一次eval都重置一下 ！！！！
     loader.reset_iterator(split)
 
     n = 0
@@ -112,7 +112,7 @@ def eval_split(model, crit, loader, eval_kwargs={}):
                 os.system(cmd)
 
             if verbose:
-                logging.info('image %s: %s' % (entry['image_id'], entry['caption']))
+                logging.debug('image %s: %s' % (entry['image_id'], entry['caption']))
 
         # if we wrapped around the split or used up val imgs budget then bail
         ix0 = data['bounds']['it_pos_now']

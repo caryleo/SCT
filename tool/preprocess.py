@@ -125,20 +125,21 @@ def preprocess_captions(opts):
         noun_occurrences["UNK"] = 0
 
     # NOTE::create mapping between index and word, as well as between index and noun, 1-indexed!!!
-    array_index_to_word = dict()
-    array_word_to_index = dict()
+    dict_index_to_word = dict()
+    dict_word_to_index = dict()
 
-    array_index_to_noun = dict()
-    array_noun_to_index = dict()
+    dict_noun_to_index = dict()
+    array_nouns_indices = list()
 
     for index, word in enumerate(vocabulary, start=1):
-        array_index_to_word[index] = word
-        array_word_to_index[word] = index
+        dict_index_to_word[index] = word
+        dict_word_to_index[word] = index
+        if word in nouns:
+            array_nouns_indices.append(index)
 
     # NOTE::index for noun is independent
     for index, noun in enumerate(nouns, start=1):
-        array_index_to_noun[index] = noun
-        array_noun_to_index[noun] = index
+        dict_noun_to_index[noun] = index
 
     # NOTE: encode all captions into a large array for h5 storage, 1-indexed!!!
     logging.info("Encoding all captions into one array")
@@ -167,20 +168,20 @@ def preprocess_captions(opts):
                 # trunk to max_length
                 if pos < max_sentence_length:
                     if word not in rares:
-                        captions_per_image[tag, pos] = array_word_to_index[word]
+                        captions_per_image[tag, pos] = dict_word_to_index[word]
                         if word in nouns:
                             # for every noun, store the caption index and position (noun index to caption index & pos)
-                            dict_nouns[array_noun_to_index[word]] = dict_nouns.get(array_noun_to_index[word], [])
-                            dict_nouns[array_noun_to_index[word]].append((caption_per_image_start + tag, pos))
+                            dict_nouns[dict_noun_to_index[word]] = dict_nouns.get(dict_noun_to_index[word], [])
+                            dict_nouns[dict_noun_to_index[word]].append((caption_per_image_start + tag, pos))
                             # for every caption, store the noun index and position (caption index to noun index & pos)
                             dict_nouns_captions[caption_per_image_start + tag] = dict_nouns_captions.get(caption_per_image_start + tag, [])
-                            dict_nouns_captions[caption_per_image_start + tag].append((array_noun_to_index[word], pos))
+                            dict_nouns_captions[caption_per_image_start + tag].append((dict_noun_to_index[word], pos))
                     else:
-                        captions_per_image[tag, pos] = array_word_to_index["UNK"]
+                        captions_per_image[tag, pos] = dict_word_to_index["UNK"]
                         dict_nouns["UNK"] = dict_nouns.get("UNK", [])
                         dict_nouns["UNK"].append((caption_per_image_start + tag, pos))
                         dict_nouns_captions[caption_per_image_start + tag] = dict_nouns_captions.get(caption_per_image_start + tag, [])
-                        dict_nouns_captions[caption_per_image_start + tag].append((array_noun_to_index["UNK"], pos))
+                        dict_nouns_captions[caption_per_image_start + tag].append((dict_noun_to_index["UNK"], pos))
 
         array_captions.append(captions_per_image)
         array_index_start[index] = caption_per_image_start
@@ -215,9 +216,11 @@ def preprocess_captions(opts):
     logging.info("Creating json file: %s" % path_to_output_json)
     output_json = dict()
     logging.info("Writing word index")
-    output_json["index_to_word"] = array_index_to_word
+    output_json["index_to_word"] = dict_index_to_word
+    logging.info("Writing indices of nouns")
+    output_json["nouns_indices"] = array_nouns_indices
     logging.info("Writing noun index")
-    output_json["index_to_noun"] = array_index_to_noun
+    output_json["noun_to_index"] = dict_noun_to_index
     logging.info("Writing nouns in captions, each entry has a list of captions and corresponding position")
     output_json["nouns_in_captions"] = dict_nouns
     logging.info("Writing captions for nouns , each entry has a list of nouns and corresponding position")
