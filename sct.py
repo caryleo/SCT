@@ -1,7 +1,8 @@
 """
 FILENAME:       SCT
-DESCRIPTION:    the core
+DESCRIPTION:    the program core
 """
+
 import json
 import logging
 import torch

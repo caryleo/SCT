@@ -1,11 +1,6 @@
-# !/usr/bin/env python3
-# -*- coding: UTF-8 -*-
-
 """
-FILENAME:       options.py
-BY:             Gary 2019.3.12
-LAST MODIFIED:  2019.3.15
-DESCRIPTION:    reads arguments from the command line
+FILENAME:       OPTIONS
+DESCRIPTION:    options for the whole program, a mistake I made
 """
 
 import argparse
@@ -136,11 +131,21 @@ def parse_arg():
                         help='Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires '
                              'coco-caption code from Github.')
 
+    parser.add_argument('-stage', '--stage_id',
+                        type=int,
+                        default=1,
+                        choices=[1, 2, 3],
+                        help='The stage of training')
+
+    parser.add_argument('-tm', '--train_mode',
+                        type=int,
+                        default=0,
+                        choices=[1, 2, 3],
+                        help='The stage of training to start from, 0 for all')
+
     # model
     parser.add_argument('-model', '--caption_model',
                         type=str,
-                        default="fc",
-                        choices=["fc", "att2in", "tdbu", "att2in2", "adaatt", "adaattmo", "elka", "ribeka"],
                         help="model we want to use")
 
     parser.add_argument('-rnn', '--rnn_size',
@@ -178,6 +183,26 @@ def parse_arg():
                         type=int,
                         default=2048,
                         help='2048 for resnet, 512 for vgg')
+
+    parser.add_argument('-fusecoef', '--fuse_coefficient',
+                        type=float,
+                        default=0.75,
+                        help='fuse coeficient for output')
+
+    parser.add_argument('-memosize', '--memory_size',
+                        type=int,
+                        default=512,
+                        help='size of memory, same as att size (rnn_size)')
+
+    parser.add_argument('-prefcsize', '--relation_pre_fc_size',
+                        type=int,
+                        default=1024,
+                        help='size of pre_fc in relation module')
+
+    parser.add_argument('-postfcsize', '--relation_post_fc_size',
+                        type=int,
+                        default=4096,
+                        help='size of post_fc in relation module')
 
     # optimization
     parser.add_argument('-opt', '--optim',

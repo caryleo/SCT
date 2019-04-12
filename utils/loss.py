@@ -1,7 +1,12 @@
+"""
+FILENAME:       LOSS
+DESCRIPTION:    loss functions for the model
+"""
+
 import torch
 from torch import nn as nn
 
-from utils.utils import to_contiguous
+from utils.misc import to_contiguous
 
 
 # language model loss
@@ -20,3 +25,21 @@ class LanguageModelCriterion(nn.Module):
         output = torch.sum(output) / torch.sum(mask)
 
         return output
+
+
+# relation classification loss
+class RelationClassificationCriterion(nn.Module):
+    def __init__(self):
+        super(RelationClassificationCriterion, self).__init__()
+
+    def forward(self, *input):
+        pass
+
+
+# stage 3 fuse loss
+class FusionCriterion(nn.Module):
+    def __init__(self):
+        super(FusionCriterion, self).__init__()
+
+    def forward(self, *input):
+        pass

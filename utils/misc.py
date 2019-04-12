@@ -1,3 +1,9 @@
+"""
+FILENAME:       MISC
+DESCRIPTION:    miscellaneous functions
+"""
+
+
 # Input: seq, N*D numpy array, with element 0 .. vocab_size. 0 is END token.
 def decode_sequence(ix_to_word, seq):
     N, D = seq.shape

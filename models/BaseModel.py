@@ -1,108 +1,117 @@
-# This file contains Att2in2, AdaAtt, AdaAttMO, TopDown model
-
-# AdaAtt is from Knowing When to Look: Adaptive Attention via A Visual Sentinel for Image Captioning
-# https://arxiv.org/abs/1612.01887
-# AdaAttMO is a modified version with maxout lstm
-
-# Att2in is from Self-critical Sequence Training for Image Captioning
-# https://arxiv.org/abs/1612.00563
-# In this file we only have Att2in2, which is a slightly different version of att2in,
-# in which the img feature embedding and word embedding is the same as what in adaatt.
-
-# TopDown is from Bottom-Up and Top-Down Attention for Image Captioning and VQA
-# https://arxiv.org/abs/1707.07998
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+"""
+FILENAME:       MODELS/BaseModel
+DESCRIPTION:    BaseModel for SCT
+"""
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import *
-
-from .CaptionModel import CaptionModel
 
 
-class AttModel(CaptionModel):
+class BaseModel(nn.Module):
     def __init__(self, opts):
-        super(AttModel, self).__init__()
-        self.vocab_size = opts.vocabulary_size
-        self.input_encoding_size = opts.input_encoding_size
+        super(BaseModel, self).__init__()
+
         # self.rnn_type = opts.rnn_type
-        self.rnn_size = opts.rnn_size
-        self.num_layers = opts.num_layers
-        self.drop_prob_lm = opts.dropout_prob
-        self.seq_length = opts.max_caption_length
-        self.fc_feat_size = opts.fc_feat_size
-        self.att_feat_size = opts.att_feat_size
-        self.att_hid_size = opts.att_hid_size
+        self.rnn_size = opts.rnn_size  # 512 rnn隐藏单元个数
+        self.num_layers = opts.num_layers  # 1 LSTM层数，在这个模型里面没有意义
+        self.drop_prob_lm = opts.dropout_prob  # dropout概率，暂时不管
+        self.ss_prob = 0.0  # Schedule sampling probability SS概率，暂时不管
+        self.seq_length = opts.max_caption_length  # 16 caption截断长度
 
-        self.ss_prob = 0.0  # Schedule sampling probability
+        self.vocab_size = opts.vocabulary_size  # 9486 词汇表
+        self.nouns_size = opts.nouns_size # 7668 名词表
+        self.vocabulary = opts.vocabulary # 词汇索引到单词
+        self.nouns = opts.nouns # 名词单词到索引
+        self.input_encoding_size = opts.input_encoding_size  # 512 单词输入内部特征表示维度
+        self.fc_feat_size = opts.fc_feat_size  # 2048 FC特征长度，这个模型暂时用不到
+        self.att_feat_size = opts.att_feat_size  # 2048 ATT特征长度，att*att*2048 14*14*2048
+        self.att_hid_size = opts.att_hid_size  # 512 ATT过程中的中间维度（线性转换后到生成分数前）
 
-        self.embed = nn.Sequential(nn.Embedding(self.vocab_size + 1, self.input_encoding_size),
-                                   nn.ReLU(),
-                                   nn.Dropout(self.drop_prob_lm))
-        self.fc_embed = nn.Sequential(nn.Linear(self.fc_feat_size, self.rnn_size),
-                                      nn.ReLU(),
-                                      nn.Dropout(self.drop_prob_lm))
+        self.word_embed = nn.Sequential(nn.Embedding(self.vocab_size + 1, self.input_encoding_size),
+                                        nn.ReLU(),
+                                        nn.Dropout(self.drop_prob_lm))  # 9487 - 512 单词嵌入，多出一个是对应BOS
+        # self.fc_embed = nn.Sequential(nn.Linear(self.fc_feat_size, self.rnn_size),
+        #                               nn.ReLU(),
+        #                               nn.Dropout(self.drop_prob_lm)) # 2048 - 512 FC特征嵌入，这里用不上，因为Att2in2模型不需要FC特征
+
+        self.fc_embed = lambda x: x  # 2048 - 2048 由于本模型不需要FC，因此这里做一个简单的处理（用于保持模型一致）
+
         self.att_embed = nn.Sequential(nn.Linear(self.att_feat_size, self.rnn_size),
                                        nn.ReLU(),
-                                       nn.Dropout(self.drop_prob_lm))
-        self.logit = nn.Linear(self.rnn_size, self.vocab_size + 1)
-        self.ctx2att = nn.Linear(self.rnn_size, self.att_hid_size)
+                                       nn.Dropout(self.drop_prob_lm))  # 512 - 512 att结果到hid的维度一致
+
+        self.logit = nn.Linear(self.rnn_size, self.vocab_size + 1)  # 512 - 9487 最后的输出映射
+
+        self.ctx2att = nn.Linear(self.rnn_size, self.att_hid_size)  # 512 - 512 用于计算att向量的结果，提前计算节省内存
+
+        self.core = BaseCore(opts)
+        self.stage = opts.stage_id
 
     def init_hidden(self, bsz):
-        weight = next(self.parameters()).data
-        return (Variable(weight.new(self.num_layers, bsz, self.rnn_size).zero_()),
-                Variable(weight.new(self.num_layers, bsz, self.rnn_size).zero_()))
 
-    def forward(self, fc_feats, att_feats, seq):
-        batch_size = fc_feats.size(0)
+        weight = next(self.parameters()).data
+        # h 和 c
+        return (weight.new(self.num_layers, bsz, self.rnn_size).zero_(),
+                weight.new(self.num_layers, bsz, self.rnn_size).zero_())
+
+    def forward(self, fc_feats, att_feats, captions):
+        batch_size = fc_feats.size(0)  # 64 取batch的大小
         state = self.init_hidden(batch_size)
 
-        outputs = []
+        outputs = []  # 按时间点排序
 
-        # embed fc and att feats
-        fc_feats = self.fc_embed(fc_feats)
-        _att_feats = self.att_embed(att_feats.view(-1, self.att_feat_size))
-        att_feats = _att_feats.view(*(att_feats.size()[:-1] + (self.rnn_size,)))
+        # embed fc and att feats 提前计算好节省时间和空间
+        # att特征在rnn中的内部表示，用于形成注意力上下文
+        fc_feats = self.fc_embed(fc_feats)  # fc特征映射一下，变成 batch * rnn_size 64*512
+        _att_feats = self.att_embed(
+            att_feats.view(-1, self.att_feat_size))  # 调整成二维好计算，(batch * att * att) * rnn_size (64*14*14)*512
+        att_feats = _att_feats.view(
+            *(att_feats.size()[:-1] + (self.rnn_size,)))  # 再调整回来，batch*att*att*rnn_size 64*14*14*512
 
-        # Project the attention feats first to reduce memory and computation consumptions. 进入
-        p_att_feats = self.ctx2att(att_feats.view(-1, self.rnn_size))
-        p_att_feats = p_att_feats.view(*(att_feats.size()[:-1] + (self.att_hid_size,)))
+        # Project the attention feats first to reduce memory and computation consumptions. 提前计算好节省时间和空间
+        # att特征在att中的内部表示，用于形成注意力分数
+        internal_att_feats = self.ctx2att(
+            att_feats.view(-1, self.rnn_size))  # 上下文转att结果，同理，(batch*att*att)*rnn_size (64*14*14)*512
+        internal_att_feats = internal_att_feats.view(
+            *(att_feats.size()[:-1] + (self.att_hid_size,)))  # 调整回合适的维度，同理，batch*att*att*att_hid_size 64*14*14*512
 
-        for i in range(seq.size(1) - 1):
+        # 取caption的长度，即最大长度16+2,减1是为了将最后一个EOS去掉
+        for i in range(captions.size(1) - 1):
+
             if self.training and i >= 1 and self.ss_prob > 0.0:  # otherwise no need to sample
+                # 这一部分ss的情况，暂时不管
                 sample_prob = fc_feats.data.new(batch_size).uniform_(0, 1)
                 sample_mask = sample_prob < self.ss_prob
                 if sample_mask.sum() == 0:
-                    it = seq[:, i].clone()
+                    it = captions[:, i].clone()
                 else:
                     sample_ind = sample_mask.nonzero().view(-1)
-                    it = seq[:, i].data.clone()
+                    it = captions[:, i].data.clone()
                     # prob_prev = torch.exp(outputs[-1].data.index_select(0, sample_ind)) # fetch prev distribution: shape Nx(M+1)
                     # it.index_copy_(0, sample_ind, torch.multinomial(prob_prev, 1).view(-1))
                     prob_prev = torch.exp(outputs[-1].data)  # fetch prev distribution: shape Nx(M+1)
                     it.index_copy_(0, sample_ind, torch.multinomial(prob_prev, 1).view(-1).index_select(0, sample_ind))
-                    it = Variable(it, requires_grad=False)
+                    it.requires_grad = False
             else:
-                it = seq[:, i].clone()
+                # t=0 送入BOS，其他时刻送入参考caption对应时间点的字符
+                it = captions[:, i].clone()
                 # break if all the sequences end
-            if i >= 1 and seq[:, i].data.sum() == 0:
+            if i >= 1 and captions[:, i].data.sum() == 0:
+                # 如果所有的caption这个时候都是0了，就结束了
                 break
 
-            xt = self.embed(it)
+            xt = self.word_embed(it)  # 将单词编码，batch * encoding，64*9487 - 64*512
 
-            output, state = self.core(xt, fc_feats, att_feats, p_att_feats, state)
-            output = F.log_softmax(self.logit(output))
+            output, state = self.core(xt, fc_feats, att_feats, internal_att_feats, state)
+            output = F.log_softmax(self.logit(output)) # 出来的结果做一下log和softmax，这一已经映射到了词汇表 batch * (vocab + 1)
             outputs.append(output)
 
         return torch.cat([_.unsqueeze(1) for _ in outputs], 1)
 
     def get_logprobs_state(self, it, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats, state):
         # 'it' is Variable contraining a word index
-        xt = self.embed(it)
+        xt = self.word_embed(it)
 
         output, state = self.core(xt, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats, state)
         logprobs = F.log_softmax(self.logit(output))
@@ -110,7 +119,7 @@ class AttModel(CaptionModel):
         return logprobs, state
 
     def sample_beam(self, fc_feats, att_feats, opts={}):
-        beam_size = opts.get('beam_size', 10)
+        beam_size = opts.get('beam_size', 64)  # batch
         batch_size = fc_feats.size(0)
 
         # embed fc and att feats
@@ -137,7 +146,8 @@ class AttModel(CaptionModel):
             for t in range(1):
                 if t == 0:  # input <bos>
                     it = fc_feats.data.new(beam_size).long().zero_()
-                    xt = self.embed(Variable(it, requires_grad=False))
+                    it.requires_grad = False
+                    xt = self.word_embed(it)
 
                 output, state = self.core(xt, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats, state)
                 logprobs = F.log_softmax(self.logit(output))
@@ -183,11 +193,11 @@ class AttModel(CaptionModel):
                     # scale logprobs by temperature
                     prob_prev = torch.exp(torch.div(logprobs.data, temperature)).cpu()
                 it = torch.multinomial(prob_prev, 1).cuda()
-                sampleLogprobs = logprobs.gather(1, Variable(it,
-                                                             requires_grad=False))  # gather the logprobs at sampled positions
+                it.requires_grad = False
+                sampleLogprobs = logprobs.gather(1, it)  # gather the logprobs at sampled positions
                 it = it.view(-1).long()  # and flatten indices for downstream processing
-
-            xt = self.embed(Variable(it, requires_grad=False))
+            it.requires_grad = False
+            xt = self.word_embed(it)
 
             if t >= 1:
                 # stop when all finished
@@ -207,10 +217,117 @@ class AttModel(CaptionModel):
 
         return torch.cat([_.unsqueeze(1) for _ in seq], 1), torch.cat([_.unsqueeze(1) for _ in seqLogprobs], 1)
 
+    def beam_search(self, state, logprobs, *args, **kwargs):
+        # args are the miscelleous inputs to the core in addition to embedded word and state
+        # kwargs only accept opt
 
-class AdaAtt_lstm(nn.Module):
-    def __init__(self, opts, use_maxout=True):
-        super(AdaAtt_lstm, self).__init__()
+        def beam_step(logprobsf, beam_size, t, beam_seq, beam_seq_logprobs, beam_logprobs_sum, state):
+            # INPUTS:
+            # logprobsf: probabilities augmented after diversity
+            # beam_size: obvious
+            # t        : time instant
+            # beam_seq : tensor contanining the beams
+            # beam_seq_logprobs: tensor contanining the beam logprobs
+            # beam_logprobs_sum: tensor contanining joint logprobs
+            # OUPUTS:
+            # beam_seq : tensor containing the word indices of the decoded captions
+            # beam_seq_logprobs : log-probability of each decision made, same size as beam_seq
+            # beam_logprobs_sum : joint log-probability of each beam
+
+            ys, ix = torch.sort(logprobsf, 1, True)
+            candidates = []
+            cols = min(beam_size, ys.size(1))
+            rows = beam_size
+            if t == 0:
+                rows = 1
+            for c in range(cols):  # for each column (word, essentially)
+                for q in range(rows):  # for each beam expansion
+                    # compute logprob of expanding beam q with word in (sorted) position c
+                    local_logprob = ys[q, c]
+                    candidate_logprob = beam_logprobs_sum[q] + local_logprob.cpu()
+                    candidates.append(dict(c=ix[q, c], q=q,
+                                           p=candidate_logprob,
+                                           r=local_logprob))
+            candidates = sorted(candidates, key=lambda x: -x['p'])
+
+            new_state = [_.clone() for _ in state]
+            # beam_seq_prev, beam_seq_logprobs_prev
+            if t >= 1:
+                # we''ll need these as reference when we fork beams around
+                beam_seq_prev = beam_seq[:t].clone()
+                beam_seq_logprobs_prev = beam_seq_logprobs[:t].clone()
+            for vix in range(beam_size):
+                v = candidates[vix]
+                # fork beam index q into index vix
+                if t >= 1:
+                    beam_seq[:t, vix] = beam_seq_prev[:, v['q']]
+                    beam_seq_logprobs[:t, vix] = beam_seq_logprobs_prev[:, v['q']]
+                # rearrange recurrent states
+                for state_ix in range(len(new_state)):
+                    #  copy over state in previous beam q to new beam at vix
+                    new_state[state_ix][:, vix] = state[state_ix][:, v['q']]  # dimension one is time step
+                # append new end terminal at the end of this beam
+                beam_seq[t, vix] = v['c']  # c'th word is the continuation
+                beam_seq_logprobs[t, vix] = v['r']  # the raw logprob here
+                beam_logprobs_sum[vix] = v['p']  # the new (sum) logprob along this beam
+            state = new_state
+            return beam_seq, beam_seq_logprobs, beam_logprobs_sum, state, candidates
+
+        # start beam search
+        opt = kwargs['opt']
+        beam_size = opt.get('beam_size', 10)
+
+        beam_seq = torch.LongTensor(self.seq_length, beam_size).zero_()
+        beam_seq_logprobs = torch.FloatTensor(self.seq_length, beam_size).zero_()
+        # running sum of logprobs for each beam
+        beam_logprobs_sum = torch.zeros(beam_size)
+        done_beams = []
+
+        for t in range(self.seq_length):
+            """pem a beam merge. that is,
+            for every previous beam we now many new possibilities to branch out
+            we need to resort our beams to maintain the loop invariant of keeping
+            the top beam_size most likely sequences."""
+            logprobsf = logprobs.data.float()  # lets go to CPU for more efficiency in indexing operations
+            # suppress UNK tokens in the decoding
+            logprobsf[:, logprobsf.size(1) - 1] = logprobsf[:, logprobsf.size(1) - 1] - 1000
+
+            beam_seq, \
+            beam_seq_logprobs, \
+            beam_logprobs_sum, \
+            state, \
+            candidates_divm = beam_step(logprobsf,
+                                        beam_size,
+                                        t,
+                                        beam_seq,
+                                        beam_seq_logprobs,
+                                        beam_logprobs_sum,
+                                        state)
+
+            for vix in range(beam_size):
+                # if time's up... or if end token is reached then copy beams
+                if beam_seq[t, vix] == 0 or t == self.seq_length - 1:
+                    final_beam = {
+                        'seq': beam_seq[:, vix].clone(),
+                        'logps': beam_seq_logprobs[:, vix].clone(),
+                        'p': beam_logprobs_sum[vix]
+                    }
+                    done_beams.append(final_beam)
+                    # don't continue beams from finished sequences
+                    beam_logprobs_sum[vix] = -1000
+
+            # encode as vectors
+            it = beam_seq[t]
+            logprobs, state = self.get_logprobs_state(it.cuda(), *(args + (state,)))
+
+        done_beams = sorted(done_beams, key=lambda x: -x['p'])[:beam_size]
+        return done_beams
+
+
+class BaseCore(nn.Module):
+    def __init__(self, opts):
+        super(BaseCore, self).__init__()
+        self.opts = opts
         self.input_encoding_size = opts.input_encoding_size
         # self.rnn_type = opts.rnn_type
         self.rnn_size = opts.rnn_size
@@ -219,280 +336,90 @@ class AdaAtt_lstm(nn.Module):
         self.fc_feat_size = opts.fc_feat_size
         self.att_feat_size = opts.att_feat_size
         self.att_hid_size = opts.att_hid_size
-
-        self.use_maxout = use_maxout
-
-        # Build a LSTM
-        self.w2h = nn.Linear(self.input_encoding_size, (4 + (use_maxout == True)) * self.rnn_size)
-        self.v2h = nn.Linear(self.rnn_size, (4 + (use_maxout == True)) * self.rnn_size)
-
-        self.i2h = nn.ModuleList(
-            [nn.Linear(self.rnn_size, (4 + (use_maxout == True)) * self.rnn_size) for _ in range(self.num_layers - 1)])
-        self.h2h = nn.ModuleList(
-            [nn.Linear(self.rnn_size, (4 + (use_maxout == True)) * self.rnn_size) for _ in range(self.num_layers)])
-
-        # Layers for getting the fake region
-        if self.num_layers == 1:
-            self.r_w2h = nn.Linear(self.input_encoding_size, self.rnn_size)
-            self.r_v2h = nn.Linear(self.rnn_size, self.rnn_size)
-        else:
-            self.r_i2h = nn.Linear(self.rnn_size, self.rnn_size)
-        self.r_h2h = nn.Linear(self.rnn_size, self.rnn_size)
-
-    def forward(self, xt, img_fc, state):
-
-        hs = []
-        cs = []
-        for L in range(self.num_layers):
-            # c,h from previous timesteps
-            prev_h = state[0][L]
-            prev_c = state[1][L]
-            # the input to this layer
-            if L == 0:
-                x = xt
-                i2h = self.w2h(x) + self.v2h(img_fc)
-            else:
-                x = hs[-1]
-                x = F.dropout(x, self.drop_prob_lm, self.training)
-                i2h = self.i2h[L - 1](x)
-
-            all_input_sums = i2h + self.h2h[L](prev_h)
-
-            sigmoid_chunk = all_input_sums.narrow(1, 0, 3 * self.rnn_size)
-            sigmoid_chunk = F.sigmoid(sigmoid_chunk)
-            # decode the gates
-            in_gate = sigmoid_chunk.narrow(1, 0, self.rnn_size)
-            forget_gate = sigmoid_chunk.narrow(1, self.rnn_size, self.rnn_size)
-            out_gate = sigmoid_chunk.narrow(1, self.rnn_size * 2, self.rnn_size)
-            # decode the write inputs
-            if not self.use_maxout:
-                in_transform = F.tanh(all_input_sums.narrow(1, 3 * self.rnn_size, self.rnn_size))
-            else:
-                in_transform = all_input_sums.narrow(1, 3 * self.rnn_size, 2 * self.rnn_size)
-                in_transform = torch.max(
-                    in_transform.narrow(1, 0, self.rnn_size),
-                    in_transform.narrow(1, self.rnn_size, self.rnn_size))
-            # perform the LSTM update
-            next_c = forget_gate * prev_c + in_gate * in_transform
-            # gated cells form the output
-            tanh_nex_c = F.tanh(next_c)
-            next_h = out_gate * tanh_nex_c
-            if L == self.num_layers - 1:
-                if L == 0:
-                    i2h = self.r_w2h(x) + self.r_v2h(img_fc)
-                else:
-                    i2h = self.r_i2h(x)
-                n5 = i2h + self.r_h2h(prev_h)
-                fake_region = F.sigmoid(n5) * tanh_nex_c
-
-            cs.append(next_c)
-            hs.append(next_h)
-
-        # set up the decoder
-        top_h = hs[-1]
-        top_h = F.dropout(top_h, self.drop_prob_lm, self.training)
-        fake_region = F.dropout(fake_region, self.drop_prob_lm, self.training)
-
-        state = (torch.cat([_.unsqueeze(0) for _ in hs], 0),
-                 torch.cat([_.unsqueeze(0) for _ in cs], 0))
-        return top_h, fake_region, state
-
-
-class AdaAtt_attention(nn.Module):
-    def __init__(self, opts):
-        super(AdaAtt_attention, self).__init__()
-        self.input_encoding_size = opts.input_encoding_size
-        # self.rnn_type = opts.rnn_type
-        self.rnn_size = opts.rnn_size
-        self.drop_prob_lm = opts.dropout_prob
-        self.att_hid_size = opts.att_hid_size
-
-        # fake region embed
-        self.fr_linear = nn.Sequential(
-            nn.Linear(self.rnn_size, self.input_encoding_size),
-            nn.ReLU(),
-            nn.Dropout(self.drop_prob_lm))
-        self.fr_embed = nn.Linear(self.input_encoding_size, self.att_hid_size)
-
-        # h out embed
-        self.ho_linear = nn.Sequential(
-            nn.Linear(self.rnn_size, self.input_encoding_size),
-            nn.Tanh(),
-            nn.Dropout(self.drop_prob_lm))
-        self.ho_embed = nn.Linear(self.input_encoding_size, self.att_hid_size)
-
-        self.alpha_net = nn.Linear(self.att_hid_size, 1)
-        self.att2h = nn.Linear(self.rnn_size, self.rnn_size)
-
-    def forward(self, h_out, fake_region, conv_feat, conv_feat_embed):
-        # View into three dimensions
-        att_size = conv_feat.numel() // conv_feat.size(0) // self.rnn_size
-        conv_feat = conv_feat.view(-1, att_size, self.rnn_size)
-        conv_feat_embed = conv_feat_embed.view(-1, att_size, self.att_hid_size)
-
-        # view neighbor from bach_size * neighbor_num x rnn_size to bach_size x rnn_size * neighbor_num
-        fake_region = self.fr_linear(fake_region)
-        fake_region_embed = self.fr_embed(fake_region)
-
-        h_out_linear = self.ho_linear(h_out)
-        h_out_embed = self.ho_embed(h_out_linear)
-
-        txt_replicate = h_out_embed.unsqueeze(1).expand(h_out_embed.size(0), att_size + 1, h_out_embed.size(1))
-
-        img_all = torch.cat([fake_region.view(-1, 1, self.input_encoding_size), conv_feat], 1)
-        img_all_embed = torch.cat([fake_region_embed.view(-1, 1, self.input_encoding_size), conv_feat_embed], 1)
-
-        hA = F.tanh(img_all_embed + txt_replicate)
-        hA = F.dropout(hA, self.drop_prob_lm, self.training)
-
-        hAflat = self.alpha_net(hA.view(-1, self.att_hid_size))
-        PI = F.softmax(hAflat.view(-1, att_size + 1))
-
-        visAtt = torch.bmm(PI.unsqueeze(1), img_all)
-        visAttdim = visAtt.squeeze(1)
-
-        atten_out = visAttdim + h_out_linear
-
-        h = F.tanh(self.att2h(atten_out))
-        h = F.dropout(h, self.drop_prob_lm, self.training)
-        return h
-
-
-class AdaAttCore(nn.Module):
-    def __init__(self, opts, use_maxout=False):
-        super(AdaAttCore, self).__init__()
-        self.lstm = AdaAtt_lstm(opts, use_maxout)
-        self.attention = AdaAtt_attention(opts)
-
-    def forward(self, xt, fc_feats, att_feats, p_att_feats, state):
-        h_out, p_out, state = self.lstm(xt, fc_feats, state)
-        atten_out = self.attention(h_out, p_out, att_feats, p_att_feats)
-        return atten_out, state
-
-
-class TopDownCore(nn.Module):
-    def __init__(self, opts, use_maxout=False):
-        super(TopDownCore, self).__init__()
-        self.drop_prob_lm = opts.dropout_prob
-
-        self.att_lstm = nn.LSTMCell(opts.input_encoding_size + opts.rnn_size * 2, opts.rnn_size)  # we, fc, h^2_t-1
-        self.lang_lstm = nn.LSTMCell(opts.rnn_size * 2, opts.rnn_size)  # h^1_t, \hat v
-        self.attention = Attention(opts)
-
-    def forward(self, xt, fc_feats, att_feats, p_att_feats, state):
-        prev_h = state[0][-1]
-        att_lstm_input = torch.cat([prev_h, fc_feats, xt], 1)
-
-        h_att, c_att = self.att_lstm(att_lstm_input, (state[0][0], state[1][0]))
-
-        att = self.attention(h_att, att_feats, p_att_feats)
-
-        lang_lstm_input = torch.cat([att, h_att], 1)
-        # lang_lstm_input = torch.cat([att, F.dropout(h_att, self.drop_prob_lm, self.training)], 1) ?????
-
-        h_lang, c_lang = self.lang_lstm(lang_lstm_input, (state[0][1], state[1][1]))
-
-        output = F.dropout(h_lang, self.drop_prob_lm, self.training)
-        state = (torch.stack([h_att, h_lang]), torch.stack([c_att, c_lang]))
-
-        return output, state
-
-
-class Attention(nn.Module):
-    def __init__(self, opts):
-        super(Attention, self).__init__()
-        self.rnn_size = opts.rnn_size
-        self.att_hid_size = opts.att_hid_size
-
-        self.h2att = nn.Linear(self.rnn_size, self.att_hid_size)
-        self.alpha_net = nn.Linear(self.att_hid_size, 1)
-
-    def forward(self, h, att_feats, p_att_feats):
-        # The p_att_feats here is already projected
-        att_size = att_feats.numel() // att_feats.size(0) // self.rnn_size
-        att = p_att_feats.view(-1, att_size, self.att_hid_size)
-
-        att_h = self.h2att(h)  # batch * att_hid_size
-        att_h = att_h.unsqueeze(1).expand_as(att)  # batch * att_size * att_hid_size
-        dot = att + att_h  # batch * att_size * att_hid_size
-        dot = F.tanh(dot)  # batch * att_size * att_hid_size
-        dot = dot.view(-1, self.att_hid_size)  # (batch * att_size) * att_hid_size
-        dot = self.alpha_net(dot)  # (batch * att_size) * 1
-        dot = dot.view(-1, att_size)  # batch * att_size
-
-        weight = F.softmax(dot)  # batch * att_size
-        att_feats_ = att_feats.view(-1, att_size, self.rnn_size)  # batch * att_size * rnn_size
-        att_res = torch.bmm(weight.unsqueeze(1), att_feats_).squeeze(1)  # batch * rnn_size
-
-        return att_res
-
-
-class Att2in2Core(nn.Module):
-    def __init__(self, opts):
-        super(Att2in2Core, self).__init__()
-        self.input_encoding_size = opts.input_encoding_size
-        # self.rnn_type = opts.rnn_type
-        self.rnn_size = opts.rnn_size
-        self.num_layers = opts.num_layers
-        self.drop_prob_lm = opts.dropout_prob
-        self.fc_feat_size = opts.fc_feat_size
-        self.att_feat_size = opts.att_feat_size
-        self.att_hid_size = opts.att_hid_size
+        self.fuse_coefficient = opts.fuse_coefficient
 
         # Build a LSTM
-        self.a2c = nn.Linear(self.rnn_size, 2 * self.rnn_size)
-        self.i2h = nn.Linear(self.input_encoding_size, 5 * self.rnn_size)
-        self.h2h = nn.Linear(self.rnn_size, 5 * self.rnn_size)
-        self.dropout = nn.Dropout(self.drop_prob_lm)
+        self.a2c = nn.Linear(self.rnn_size, 2 * self.rnn_size)  # 注意力上下文到c，因为要用maxout所以是两倍的rnn，512 - 1024
+        self.i2h = nn.Linear(self.input_encoding_size, 5 * self.rnn_size)  # 单词嵌入结果到hid的嵌入，因为有三个门和两个maxout的c，512 - 2560
+        self.h2h = nn.Linear(self.rnn_size, 5 * self.rnn_size)  # hid到hid，512 - 2560
+        self.dropout = nn.Dropout(self.drop_prob_lm)  # dropout层
 
-        self.attention = Attention(opts)
+        self.attention = BaseAttention(opts)
+        self.relation = BaseRealtion(opts)
+        self.memory = BaseMemory(opts)
 
-    def forward(self, xt, fc_feats, att_feats, p_att_feats, state):
-        att_res = self.attention(state[0][-1], att_feats, p_att_feats)
+    def forward(self, xt, fc_feats, att_feats, internal_att_feats, state):
+        att_res = self.attention(state[0][-1], att_feats, internal_att_feats)  # 先把att算出来 batch*rnn_size 64*512
 
-        all_input_sums = self.i2h(xt) + self.h2h(state[0][-1])
-        sigmoid_chunk = all_input_sums.narrow(1, 0, 3 * self.rnn_size)
-        sigmoid_chunk = F.sigmoid(sigmoid_chunk)
-        in_gate = sigmoid_chunk.narrow(1, 0, self.rnn_size)
-        forget_gate = sigmoid_chunk.narrow(1, self.rnn_size, self.rnn_size)
-        out_gate = sigmoid_chunk.narrow(1, self.rnn_size * 2, self.rnn_size)
+        all_input_sums = self.i2h(xt) + self.h2h(
+            state[0][-1])  # 先把x和h的线性嵌入加起来，准备计算三个门，前三个rnn_size batch*(5*rnn_size) 64*2560
+        sigmoid_chunk = all_input_sums.narrow(1, 0, 3 * self.rnn_size)  # 前三个部分 batch*(3*rnn_size) 64 * 1536
+        sigmoid_chunk = F.sigmoid(sigmoid_chunk)  # sigmoid变换 batch * (3*rnn_size) 64*1536
+        in_gate = sigmoid_chunk.narrow(1, 0, self.rnn_size)  # 输入门
+        forget_gate = sigmoid_chunk.narrow(1, self.rnn_size, self.rnn_size)  # 忘记门
+        out_gate = sigmoid_chunk.narrow(1, self.rnn_size * 2, self.rnn_size)  # 输出门
 
         in_transform = all_input_sums.narrow(1, 3 * self.rnn_size, 2 * self.rnn_size) + \
-                       self.a2c(att_res)
+                       self.a2c(att_res)  # 后两个部分 batch*（2*rnn_size） 64*1024
         in_transform = torch.max(
             in_transform.narrow(1, 0, self.rnn_size),
-            in_transform.narrow(1, self.rnn_size, self.rnn_size))
-        next_c = forget_gate * state[1][-1] + in_gate * in_transform
-        next_h = out_gate * F.tanh(next_c)
+            in_transform.narrow(1, self.rnn_size, self.rnn_size))  # maxout
 
-        output = self.dropout(next_h)
+        next_c = forget_gate * state[1][-1] + in_gate * in_transform  # c batch*rnn_size 64*512
+        next_h = out_gate * F.tanh(next_c)  # h batch * rnn_size 64 * 512
+
+        if self.opts.stage_id == 1:
+            # 第一阶段，直接使用语言模型的输出
+            output = self.dropout(next_h)  # 对输出，做一个dropout
+        elif self.opts.stage_id == 2:
+            # 第二阶段，还是使用语言模型的输出，但是要存memory
+
         state = (next_h.unsqueeze(0), next_c.unsqueeze(0))
         return output, state
 
 
-class AdaAttModel(AttModel):
+class BaseAttention(nn.Module):
     def __init__(self, opts):
-        super(AdaAttModel, self).__init__(opts)
-        self.core = AdaAttCore(opts)
+        super(BaseAttention, self).__init__()
+        self.rnn_size = opts.rnn_size
+        self.att_hid_size = opts.att_hid_size
+
+        self.h2att = nn.Linear(self.rnn_size, self.att_hid_size)  # hid到att向量的嵌入，512 - 512
+        self.alpha_net = nn.Linear(self.att_hid_size, 1)  # 上下文最终表示, 512 - 1
+
+    def forward(self, h, att_feats, internal_att_feats):
+        # The p_att_feats here is already projected
+        att_size = att_feats.numel() // att_feats.size(0) // self.rnn_size  # 计算总att_size，(att*att), (14*14)
+        att = internal_att_feats.view(-1, att_size,
+                                      self.att_hid_size)  # 把上下文向量中间空间维度展开，batch*att_size*att_hid_size, 64 * 196 * 512
+
+        # 处理hid和att
+        att_h = self.h2att(h)  # 先把hid部分转换一下，batch * att_hid_size，64 * 512
+        att_h = att_h.unsqueeze(1).expand_as(att)  # 针对每一个空间特征，复制一遍，batch * att_size * att_hid_size，64 * 196 * 512
+        dot = att + att_h  # att部分和hid部分加在一起，batch * att_size * att_hid_size，64 * 196 * 512
+        dot = F.tanh(dot)  # tanh变化，batch * att_size * att_hid_size，64*196*512
+        dot = dot.view(-1, self.att_hid_size)  # 变成两维度好计算，(batch * att_size) * att_hid_size，（64*196）*512
+        dot = self.alpha_net(dot)  # 映射到区域注意力分数，(batch * att_size) * 1，（64*196）*1
+        dot = dot.view(-1, att_size)  # 针对各个空间区域的分数，batch * att_size，64*196
+
+        weight = F.softmax(dot)  # 针对没一个区域的softmax，batch * att_size，64*196
+        att_feats_ = att_feats.view(-1, att_size, self.rnn_size)  # 把空间区域部分展开 batch * att_size * rnn_size 64*196*512
+        att_res = torch.bmm(weight.unsqueeze(1), att_feats_).squeeze(1)  # 注意力结果 batch * rnn_size 64*512
+
+        return att_res
 
 
-# AdaAtt with maxout lstm
-class AdaAttMOModel(AttModel):
+class BaseRealtion(nn.Module):
     def __init__(self, opts):
-        super(AdaAttMOModel, self).__init__(opts)
-        self.core = AdaAttCore(opts, True)
+        pass
+
+    def forward(self, *input):
+        pass
 
 
-class Att2in2Model(AttModel):
+class BaseMemory(nn.Module):
     def __init__(self, opts):
-        super(Att2in2Model, self).__init__(opts)
-        self.core = Att2in2Core(opts)
-        delattr(self, 'fc_embed')
-        self.fc_embed = lambda x: x
+        pass
 
-
-class TopDownModel(AttModel):
-    def __init__(self, opts):
-        super(TopDownModel, self).__init__(opts)
-        self.num_layers = 2
-        self.core = TopDownCore(opts)
+    def forward(self, *input):
+        pass

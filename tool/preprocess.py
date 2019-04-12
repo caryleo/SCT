@@ -2,6 +2,7 @@
 FILENAME:       PREPROCESS
 DESCRIPTION:    preprocess tools for captions and images
 """
+
 import json
 import logging
 import h5py
@@ -13,7 +14,7 @@ import torch
 from torchvision import transforms
 import nltk
 
-import utils.netcore as netcore
+import utils.featcore as netcore
 import utils.resnet as resnet
 
 
@@ -276,12 +277,6 @@ def preprocess_features(opts, device):
 
     # model, use the pretrained weights
     logging.info("Loading pretrained resnet model")
-    # if model_name == "resnet50":
-    #     model = models.resnet50()
-    # elif model_name == "resnet101":
-    #     model = models.resnet101()
-    # else:
-    #     model = models.resnet152()
 
     model = getattr(resnet, model_name)()
 

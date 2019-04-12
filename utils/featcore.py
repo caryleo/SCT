@@ -1,11 +1,6 @@
-#! /usr/bin/env python3
-# -*- coding: UTF-8 -*-
-
 """
-FILENAME:       netcore.py
-BY:             @ruotianluo 2019.3.16
-LAST MODIFIED:  2019.3.16
-DESCRIPTION:    customized version of ResNet by @ruotianluo, for feature extraction
+FILENAME:       FEATCORE
+DESCRIPTION:    CNN MODEL FOR FEATURE EXTRACTION
 """
 
 import torch.nn as nn

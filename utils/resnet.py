@@ -1,11 +1,6 @@
-# !/usr/bin/env python3
-# -*- coding: UTF-8 -*-
-
 """
-FILENAME:       resnet.py
-BY:             @ruotianluo 2019.3.16
-LAST MODIFIED:  2019.3.16
-DESCRIPTION:    According to @ruotianluo, ResNet needs a little change, to follow the caffe version
+FILENAME:       resnet
+DESCRIPTION:    @ruotianluo, ResNet Caffe Version
 """
 
 import torch.nn as nn

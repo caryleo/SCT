@@ -1,11 +1,6 @@
-# !/usr/bin/env python3
-# -*- coding: UTF-8 -*-
-
 """
-FILENAME:       dataloader.py
-BY:             Gary 2019.3.16
-LAST MODIFIED:  2019.3.16
-DESCRIPTION:    load the data for training and evaluating
+FILENAME:       DATALOADER
+DESCRIPTION:    load data from preprocessed feature files
 """
 
 import json

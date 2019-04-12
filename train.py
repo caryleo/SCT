@@ -1,11 +1,6 @@
-# !/usr/bin/env python3
-# -*- coding: UTF-8 -*-
-
 """
-FILENAME:       train.py
-BY:             Gary 2019.3.12
-LAST MODIFIED:  2019.3.12
-DESCRIPTION:    train core file
+FILENAME:       TRAIN
+DESCRIPTION:    the train core
 """
 
 import logging
@@ -16,10 +11,10 @@ from six.moves import cPickle
 import torch
 import torch.optim as optim
 
-import utils.Loss
+import utils.loss as Loss
 from tool.dataloader import DataLoader
 import models
-import utils.utils as utils
+import utils.misc as misc
 import eval_utils as eval_utils
 
 try:
@@ -40,9 +35,11 @@ def train(opts, device):
     logging.info("Loading data")
     loader = DataLoader(opts)
     logging.info("Load data complete")
-    opts.vocabulary_size = loader.vocabulary_size
+    opts.vocabulary_size = loader.get_vocab_size()
     opts.max_caption_length = loader.max_caption_length
-    opts.nouns_size = loader.nouns_size
+    opts.nouns_size = loader.get_nouns_size()
+    opts.nouns = loader.get_nouns()
+    opts.vocabulary = loader.get_vocab()
     logging.info("The vocabulary size: %d" % opts.vocabulary_size)
     logging.info("The nouns size: %d" % opts.nouns_size)
     logging.info("Max caption length: %d" % opts.max_caption_length)
@@ -96,8 +93,8 @@ def train(opts, device):
     # Assure in training mode
     model.train()
 
-    # 语言对数似然损失，Adam优化
-    criterion = utils.Loss.LanguageModelCriterion()
+    # Adam优化
+
     optimizer = optim.Adam(model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay)
 
     # Load the optimizer 如果存在数据，加载优化数据
@@ -106,6 +103,9 @@ def train(opts, device):
 
     logging.info("STAGE 1: Training language model")
     logging.info("Start training")
+    opts.stage_id = 1
+    # 第一阶段，语言模型正常训练，使用对数模型训练
+    criterion = Loss.LanguageModelCriterion()
     while True:
         # update learning rate, including lr_decay and schedule_sample 这部分暂时跳过，有关学习率调整的，先放下
         if update_lr_flag:
@@ -115,7 +115,7 @@ def train(opts, device):
                 decay_factor = opts.learning_rate_decay_rate ** frac
                 opts.current_lr = opts.learning_rate * decay_factor
                 # set the decayed rate
-                utils.set_lr(optimizer, opts.current_lr)
+                misc.set_lr(optimizer, opts.current_lr)
             else:
                 opts.current_lr = opts.learning_rate
 
@@ -138,21 +138,21 @@ def train(opts, device):
         # 取出 fc att cap mask四项，这个时候已经对齐了，不用管太多
         tmp = [data['fc_feats'], data['att_feats'], data['captions'], data['masks']]
         tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
-        fc_feats, att_feats, labels, masks = tmp
+        fc_feats, att_feats, captions, masks = tmp
 
         logging.debug("FC Features shape: %s", fc_feats.shape.__str__())
         logging.debug("ATT Features shape: %s", att_feats.shape.__str__())
-        logging.debug("Labels shape: %s", labels.shape.__str__())
+        logging.debug("Labels shape: %s", captions.shape.__str__())
         logging.debug("Masks shape: %s", masks.shape.__str__())
 
         # 训练诶嘿嘿
         optimizer.zero_grad()
         # start from 1, 0 as START token没， 这里在算loss的时候做了一个特殊操作，就是把BOS去掉了
-        loss = criterion(model(fc_feats, att_feats, labels), labels[:, 1:], masks[:, 1:])
+        loss = criterion(model(fc_feats, att_feats, captions), captions[:, 1:], masks[:, 1:])
         loss.backward()
 
-        # 对梯度之
-        utils.clip_gradient(optimizer, opts.grad_clip)
+        # 对梯度做处理，防止爆炸或消失
+        misc.clip_gradient(optimizer, opts.grad_clip)
         optimizer.step()
 
         train_loss = loss.item()
@@ -192,93 +192,70 @@ def train(opts, device):
 
         # make evaluation on validation set, and save model 这里是eval的部分，保存模型的位置！！！
         if iteration % opts.save_checkpoint_every == 0:
-            logging.info("Start validation")
-            # eval model
-            eval_kwargs = {'split': 'val',
-                           'dataset': opts.input_json,
-                           'device': device}
-            eval_kwargs.update(vars(opts))
-            val_loss, predictions, lang_stats = eval_utils.eval_split(model, criterion, loader, eval_kwargs)
+            info['iter'] = iteration
+            info['epoch'] = epoch
+            info['iterators'] = loader.iterators
+            info['split_index'] = loader.split_index
 
+            history['loss_history'] = loss_history
+            history['lr_history'] = lr_history
+            history['ss_prob_history'] = ss_prob_history
+            val_loss, lang_stats = validation(opts, model, criterion, loader, info, history, device,
+                                              val_result_history, iteration, best_val_score)
             # Write validation result into summary
             if tf is not None:
                 add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
                 for k, v in lang_stats.items():
                     add_summary_value(tf_summary_writer, k, v, iteration)
-                tf_summary_writer.flush() # 刷新？？？
+                tf_summary_writer.flush()  # 刷新？？？
 
-            val_result_history[iteration] = {'loss': val_loss, 'lang_stats': lang_stats, 'predictions': predictions}
-
-            # Save model if is improving on validation result 如果取language，就以CIDEr为准，否则是loss
-            if opts.language_eval == 1:
-                current_score = lang_stats['CIDEr']
-            else:
-                current_score = - val_loss
-
-            best_flag = False
-            if best_val_score is None or current_score > best_val_score:
-                best_val_score = current_score
-                best_flag = True
-
-            # 写入检查点
-            checkpoint_path = os.path.join(opts.checkpoint_path, 'model.pth')
-            torch.save(model.state_dict(), checkpoint_path)
-            logging.info("model saved to {}".format(checkpoint_path))
-            optimizer_path = os.path.join(opts.checkpoint_path, 'optimizer.pth')
-            torch.save(optimizer.state_dict(), optimizer_path)
-
-            # Dump miscellaneous information
-            info['iter'] = iteration
-            info['epoch'] = epoch
-            info['iterators'] = loader.iterators
-            info['split_index'] = loader.split_index
-            info['best_val_score'] = best_val_score
-            info['opts'] = opts
-            info['vocabulary'] = loader.get_vocab()
-
-            history['val_result_history'] = val_result_history
-            history['loss_history'] = loss_history
-            history['lr_history'] = lr_history
-            history['ss_prob_history'] = ss_prob_history
-
-            with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '.pkl'), 'wb') as infofile:
-                cPickle.dump(info, infofile)
-            with open(os.path.join(opts.checkpoint_path, 'history_' + opts.train_id + '.pkl'), 'wb') as historyfile:
-                cPickle.dump(history, historyfile)
-            logging.info("Checkpoint Saved")
-
-            # 选择的最佳模型
-            if best_flag:
-                checkpoint_path = os.path.join(opts.checkpoint_path, 'model-best.pth')
-                torch.save(model.state_dict(), checkpoint_path)
-                logging.info("model saved to {}".format(checkpoint_path))
-                with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '-best.pkl'), 'wb') as bestfile:
-                    cPickle.dump(info, bestfile)
-
-            logging.info("validation complete")
         # Stop if reaching max epochs
         if epoch >= opts.epoch_num != -1:
             break
 
     # final round!
+    info['iter'] = iteration
+    info['epoch'] = epoch
+    info['iterators'] = loader.iterators
+    info['split_index'] = loader.split_index
+
+    history['loss_history'] = loss_history
+    history['lr_history'] = lr_history
+    history['ss_prob_history'] = ss_prob_history
+    val_loss, lang_stats = validation(opts, model, criterion, loader, info, history, device)
+    # Write validation result into summary
+    if tf is not None:
+        add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
+        for k, v in lang_stats.items():
+            add_summary_value(tf_summary_writer, k, v, iteration)
+        tf_summary_writer.flush()  # 刷新？？？
+
+    logging.info("Training complete")
+
+    logging.info("STAGE 2: Extracting memory")
+    logging.info("Start training")
+    opts.stage_id = 2
+    logging.info("Training complete")
+    logging.info("STAGE 3: Training relation model")
+    logging.info("Start training")
+    opts.stage_id = 3
+    logging.info("Training complete")
+
+
+def validation(opts, model, criterion, optimizer, loader, info, history, device, val_result_history, iteration,
+               best_val_score):
     logging.info("Start validation")
     # eval model
     eval_kwargs = {'split': 'val',
                    'dataset': opts.input_json,
                    'device': device}
     eval_kwargs.update(vars(opts))
-    val_loss, predictions, lang_stats = eval_utils.eval_split(model, criterion, loader, eval_kwargs)
 
-    # Write validation result into summary
-    if tf is not None:
-        add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
-        for k, v in lang_stats.items():
-            add_summary_value(tf_summary_writer, k, v, iteration)
-        tf_summary_writer.flush()
+    val_loss, predictions, lang_stats = eval_utils.eval_split(model, criterion, loader, eval_kwargs)
 
     val_result_history[iteration] = {'loss': val_loss, 'lang_stats': lang_stats, 'predictions': predictions}
 
-    # Save model if is improving on validation result
+    # Save model if is improving on validation result 如果取language，就以CIDEr为准，否则是loss
     if opts.language_eval == 1:
         current_score = lang_stats['CIDEr']
     else:
@@ -289,6 +266,7 @@ def train(opts, device):
         best_val_score = current_score
         best_flag = True
 
+    # 写入检查点
     checkpoint_path = os.path.join(opts.checkpoint_path, 'model.pth')
     torch.save(model.state_dict(), checkpoint_path)
     logging.info("model saved to {}".format(checkpoint_path))
@@ -296,18 +274,12 @@ def train(opts, device):
     torch.save(optimizer.state_dict(), optimizer_path)
 
     # Dump miscellaneous information
-    info['iter'] = iteration
-    info['epoch'] = epoch
-    info['iterators'] = loader.iterators
-    info['split_index'] = loader.split_index
+
     info['best_val_score'] = best_val_score
     info['opts'] = opts
     info['vocabulary'] = loader.get_vocab()
 
     history['val_result_history'] = val_result_history
-    history['loss_history'] = loss_history
-    history['lr_history'] = lr_history
-    history['ss_prob_history'] = ss_prob_history
 
     with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '.pkl'), 'wb') as infofile:
         cPickle.dump(info, infofile)
@@ -315,6 +287,7 @@ def train(opts, device):
         cPickle.dump(history, historyfile)
     logging.info("Checkpoint Saved")
 
+    # 选择的最佳模型
     if best_flag:
         checkpoint_path = os.path.join(opts.checkpoint_path, 'model-best.pth')
         torch.save(model.state_dict(), checkpoint_path)
@@ -323,8 +296,5 @@ def train(opts, device):
             cPickle.dump(info, bestfile)
 
     logging.info("validation complete")
-    logging.info("training complete")
 
-    logging.info("STAGE 2: Extracting memory")
-
-    logging.info("STAGE 3: Training relation model")
+    return val_loss, lang_stats

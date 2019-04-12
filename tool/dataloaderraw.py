@@ -16,7 +16,7 @@ preprocess = trn.Compose([
     trn.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-from utils.netcore import my_resnet
+from utils.featcore import my_resnet
 import utils.resnet
 
 
