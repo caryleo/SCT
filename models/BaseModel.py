@@ -6,6 +6,7 @@ DESCRIPTION:    BaseModel for SCT
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 
 class BaseModel(nn.Module):
@@ -17,12 +18,14 @@ class BaseModel(nn.Module):
         self.num_layers = opts.num_layers  # 1 LSTM层数，在这个模型里面没有意义
         self.drop_prob_lm = opts.dropout_prob  # dropout概率，暂时不管
         self.ss_prob = 0.0  # Schedule sampling probability SS概率，暂时不管
-        self.seq_length = opts.max_caption_length  # 16 caption截断长度
+        self.max_caption_length = opts.max_caption_length  # 16 caption截断长度
 
         self.vocab_size = opts.vocabulary_size  # 9486 词汇表
-        self.nouns_size = opts.nouns_size # 7668 名词表
-        self.vocabulary = opts.vocabulary # 词汇索引到单词
-        self.nouns = opts.nouns # 名词单词到索引
+        self.nouns_size = opts.nouns_size  # 7668 名词表
+        self.vocabulary = opts.vocabulary  # 词汇索引到单词
+        self.nouns = opts.nouns  # 名词单词到索引
+        self.fuse_coefficient = opts.fuse_coefficient
+
         self.input_encoding_size = opts.input_encoding_size  # 512 单词输入内部特征表示维度
         self.fc_feat_size = opts.fc_feat_size  # 2048 FC特征长度，这个模型暂时用不到
         self.att_feat_size = opts.att_feat_size  # 2048 ATT特征长度，att*att*2048 14*14*2048
@@ -46,16 +49,17 @@ class BaseModel(nn.Module):
         self.ctx2att = nn.Linear(self.rnn_size, self.att_hid_size)  # 512 - 512 用于计算att向量的结果，提前计算节省内存
 
         self.core = BaseCore(opts)
-        self.stage = opts.stage_id
 
     def init_hidden(self, bsz):
-
         weight = next(self.parameters()).data
         # h 和 c
         return (weight.new(self.num_layers, bsz, self.rnn_size).zero_(),
                 weight.new(self.num_layers, bsz, self.rnn_size).zero_())
 
-    def forward(self, fc_feats, att_feats, captions):
+    def memory_ready(self):
+        self.core.memory_ready()
+
+    def forward(self, fc_feats, att_feats, captions, stage_id):
         batch_size = fc_feats.size(0)  # 64 取batch的大小
         state = self.init_hidden(batch_size)
 
@@ -71,9 +75,9 @@ class BaseModel(nn.Module):
 
         # Project the attention feats first to reduce memory and computation consumptions. 提前计算好节省时间和空间
         # att特征在att中的内部表示，用于形成注意力分数
-        internal_att_feats = self.ctx2att(
+        context_att_feats = self.ctx2att(
             att_feats.view(-1, self.rnn_size))  # 上下文转att结果，同理，(batch*att*att)*rnn_size (64*14*14)*512
-        internal_att_feats = internal_att_feats.view(
+        context_att_feats = context_att_feats.view(
             *(att_feats.size()[:-1] + (self.att_hid_size,)))  # 调整回合适的维度，同理，batch*att*att*att_hid_size 64*14*14*512
 
         # 取caption的长度，即最大长度16+2,减1是为了将最后一个EOS去掉
@@ -84,27 +88,43 @@ class BaseModel(nn.Module):
                 sample_prob = fc_feats.data.new(batch_size).uniform_(0, 1)
                 sample_mask = sample_prob < self.ss_prob
                 if sample_mask.sum() == 0:
-                    it = captions[:, i].clone()
+                    wordt = captions[:, i].clone()
                 else:
                     sample_ind = sample_mask.nonzero().view(-1)
-                    it = captions[:, i].data.clone()
+                    wordt = captions[:, i].data.clone()
                     # prob_prev = torch.exp(outputs[-1].data.index_select(0, sample_ind)) # fetch prev distribution: shape Nx(M+1)
                     # it.index_copy_(0, sample_ind, torch.multinomial(prob_prev, 1).view(-1))
                     prob_prev = torch.exp(outputs[-1].data)  # fetch prev distribution: shape Nx(M+1)
-                    it.index_copy_(0, sample_ind, torch.multinomial(prob_prev, 1).view(-1).index_select(0, sample_ind))
-                    it.requires_grad = False
+                    wordt.index_copy_(0, sample_ind,
+                                      torch.multinomial(prob_prev, 1).view(-1).index_select(0, sample_ind))
+                    wordt.requires_grad = False
             else:
                 # t=0 送入BOS，其他时刻送入参考caption对应时间点的字符
-                it = captions[:, i].clone()
+                wordt = captions[:, i].clone()
                 # break if all the sequences end
             if i >= 1 and captions[:, i].data.sum() == 0:
                 # 如果所有的caption这个时候都是0了，就结束了
                 break
 
-            xt = self.word_embed(it)  # 将单词编码，batch * encoding，64*9487 - 64*512
+            xt = self.word_embed(wordt)  # 将单词编码，batch * encoding，64*9487 - 64*512
 
-            output, state = self.core(xt, fc_feats, att_feats, internal_att_feats, state)
-            output = F.log_softmax(self.logit(output)) # 出来的结果做一下log和softmax，这一已经映射到了词汇表 batch * (vocab + 1)
+            output, state, rel_res = self.core(wordt, xt, fc_feats, att_feats, context_att_feats, state, stage_id)
+            LMvocab = self.logit(output)
+            if stage_id == 1 or stage_id == 2:
+                # 只使用语言模型输出
+                output = LMvocab
+            else:
+                # 使用线性融合 (待优化)
+                for i in range(batch_size):
+                    for j in range(self.vocab_size + 1):
+                        if self.vocabulary.get(output[i][j]) in self.nouns:
+                            index = self.nouns.get(self.vocabulary.get(output[i][j]))
+                            output[i][j] = self.fuse_coefficient * LMvocab[i][j] + \
+                                           (1 - self.fuse_coefficient) * rel_res[i][index]
+                        else:
+                            output[i][j] = LMvocab[i][j]
+
+            output = F.log_softmax(output)  # 出来的结果做一下log和softmax，这一已经映射到了词汇表 batch * (vocab + 1)
             outputs.append(output)
 
         return torch.cat([_.unsqueeze(1) for _ in outputs], 1)
@@ -132,8 +152,8 @@ class BaseModel(nn.Module):
         p_att_feats = p_att_feats.view(*(att_feats.size()[:-1] + (self.att_hid_size,)))
 
         assert beam_size <= self.vocab_size + 1, 'lets assume this for now, otherwise this corner case causes a few headaches down the road. can be dealt with in future if needed'
-        seq = torch.LongTensor(self.seq_length, batch_size).zero_()
-        seqLogprobs = torch.FloatTensor(self.seq_length, batch_size)
+        seq = torch.LongTensor(self.max_caption_length, batch_size).zero_()
+        seqLogprobs = torch.FloatTensor(self.max_caption_length, batch_size)
         # lets process every image independently for now, for simplicity
 
         self.done_beams = [[] for _ in range(batch_size)]
@@ -160,7 +180,7 @@ class BaseModel(nn.Module):
         return seq.transpose(0, 1), seqLogprobs.transpose(0, 1)
 
     def sample(self, fc_feats, att_feats, opts={}):
-        sample_max = opts.get('sample_max', 1)
+        sample_max = opts.get('sample_greedy', 1)
         beam_size = opts.get('beam_size', 1)
         temperature = opts.get('temperature', 1.0)
         if beam_size > 1:
@@ -180,22 +200,23 @@ class BaseModel(nn.Module):
 
         seq = []
         seqLogprobs = []
-        for t in range(self.seq_length + 1):
-            if t == 0:  # input <bos>
+        for t in range(self.max_caption_length + 1):
+            if t == 0:  # input <bos> # 采样时，使用fc的信息做参考生成一个batch_size的全零向量做BOS
                 it = fc_feats.data.new(batch_size).long().zero_()
-            elif sample_max:
+            elif sample_max:  # 其他情况下，贪婪编码，去最大概率即可
                 sampleLogprobs, it = torch.max(logprobs.data, 1)
                 it = it.view(-1).long()
-            else:
+            else:  # 依照概率取样
                 if temperature == 1.0:
-                    prob_prev = torch.exp(logprobs.data).cpu()  # fetch prev distribution: shape Nx(M+1)
+                    prob_prev = torch.exp(logprobs.data).to("cpu")  # fetch prev distribution: shape Nx(M+1)
                 else:
                     # scale logprobs by temperature
-                    prob_prev = torch.exp(torch.div(logprobs.data, temperature)).cpu()
+                    prob_prev = torch.exp(torch.div(logprobs.data, temperature)).to("cpu")
                 it = torch.multinomial(prob_prev, 1).cuda()
-                it.requires_grad = False
                 sampleLogprobs = logprobs.gather(1, it)  # gather the logprobs at sampled positions
                 it = it.view(-1).long()  # and flatten indices for downstream processing
+            # 作为下一个时间点的输入
+
             it.requires_grad = False
             xt = self.word_embed(it)
 
@@ -277,13 +298,13 @@ class BaseModel(nn.Module):
         opt = kwargs['opt']
         beam_size = opt.get('beam_size', 10)
 
-        beam_seq = torch.LongTensor(self.seq_length, beam_size).zero_()
-        beam_seq_logprobs = torch.FloatTensor(self.seq_length, beam_size).zero_()
+        beam_seq = torch.LongTensor(self.max_caption_length, beam_size).zero_()
+        beam_seq_logprobs = torch.FloatTensor(self.max_caption_length, beam_size).zero_()
         # running sum of logprobs for each beam
         beam_logprobs_sum = torch.zeros(beam_size)
         done_beams = []
 
-        for t in range(self.seq_length):
+        for t in range(self.max_caption_length):
             """pem a beam merge. that is,
             for every previous beam we now many new possibilities to branch out
             we need to resort our beams to maintain the loop invariant of keeping
@@ -306,7 +327,7 @@ class BaseModel(nn.Module):
 
             for vix in range(beam_size):
                 # if time's up... or if end token is reached then copy beams
-                if beam_seq[t, vix] == 0 or t == self.seq_length - 1:
+                if beam_seq[t, vix] == 0 or t == self.max_caption_length - 1:
                     final_beam = {
                         'seq': beam_seq[:, vix].clone(),
                         'logps': beam_seq_logprobs[:, vix].clone(),
@@ -336,7 +357,9 @@ class BaseCore(nn.Module):
         self.fc_feat_size = opts.fc_feat_size
         self.att_feat_size = opts.att_feat_size
         self.att_hid_size = opts.att_hid_size
-        self.fuse_coefficient = opts.fuse_coefficient
+
+        self.vocabulary = opts.vocabulary  # 词汇索引到单词
+        self.nouns = opts.nouns  # 名词单词到索引
 
         # Build a LSTM
         self.a2c = nn.Linear(self.rnn_size, 2 * self.rnn_size)  # 注意力上下文到c，因为要用maxout所以是两倍的rnn，512 - 1024
@@ -345,11 +368,11 @@ class BaseCore(nn.Module):
         self.dropout = nn.Dropout(self.drop_prob_lm)  # dropout层
 
         self.attention = BaseAttention(opts)
-        self.relation = BaseRealtion(opts)
         self.memory = BaseMemory(opts)
+        self.relation = BaseRelation(opts)
 
-    def forward(self, xt, fc_feats, att_feats, internal_att_feats, state):
-        att_res = self.attention(state[0][-1], att_feats, internal_att_feats)  # 先把att算出来 batch*rnn_size 64*512
+    def forward(self, wordt, xt, fc_feats, att_feats, internal_att_feats, state, stage_id):
+        att_res = self.attention(state[0][-1], att_feats, internal_att_feats, )  # 先把att算出来 batch*rnn_size 64*512
 
         all_input_sums = self.i2h(xt) + self.h2h(
             state[0][-1])  # 先把x和h的线性嵌入加起来，准备计算三个门，前三个rnn_size batch*(5*rnn_size) 64*2560
@@ -367,15 +390,26 @@ class BaseCore(nn.Module):
 
         next_c = forget_gate * state[1][-1] + in_gate * in_transform  # c batch*rnn_size 64*512
         next_h = out_gate * F.tanh(next_c)  # h batch * rnn_size 64 * 512
+        output = self.dropout(next_h)  # 对输出，做一个dropout
 
-        if self.opts.stage_id == 1:
+        if stage_id == 1:
             # 第一阶段，直接使用语言模型的输出
-            output = self.dropout(next_h)  # 对输出，做一个dropout
-        elif self.opts.stage_id == 2:
+            rel_res = None
+        elif stage_id == 2:
             # 第二阶段，还是使用语言模型的输出，但是要存memory
+            self.memory(att_res, wordt, stage_id)
+            self.memory.finish()
+            rel_res = None
+        else:
+            # 第三阶段，使用两个网络的模型输出，这里使用一个linear fuse（限名词）
+            rel_res = self.relation(att_res, stage_id)  # 关系网络结果，batch * nouns_size 64 * 7668
 
         state = (next_h.unsqueeze(0), next_c.unsqueeze(0))
-        return output, state
+        return output, state, rel_res
+
+    def memory_ready(self):
+        memory = torch.from_numpy(self.memory.get_memory())
+        self.relation.set_memory(memory)
 
 
 class BaseAttention(nn.Module):
@@ -409,17 +443,50 @@ class BaseAttention(nn.Module):
         return att_res
 
 
-class BaseRealtion(nn.Module):
+class BaseRelation(nn.Module):
     def __init__(self, opts):
-        pass
+        super(BaseRelation, self).__init__()
+        self.vocab_size = opts.vocabulary_size  # 9486 词汇表
+        self.nouns_size = opts.nouns_size  # 7668 名词表
+        self.rnn_size = opts.rnn_size  # 512 rnn内部表示尺寸
+        self.relation_pre_fc_size = opts.relation_pre_fc_size  # 特征拼接前的线性嵌入块的尺寸 1024
+        self.relation_post_fc_size = opts.relation_post_fc_size  # 特征拼接后的线性嵌入块的尺寸 4096
+        self.pre_fc = nn.Linear(self.rnn_size, self.relation_pre_fc_size)  # 前嵌入
+        self.post_fc = nn.Linear(2 * self.relation_pre_fc_size, self.relation_post_fc_size)  # 后嵌入
 
-    def forward(self, *input):
-        pass
+    def forward(self, att_res, stage_id):
+        batch_size = att_res(0)  # batch
+        memory_pre = self.relation_pre_fc_size(self.nouns_memory)  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 1024
+        att_pre = self.relation_pre_fc_sizes(att_res)  # 处理输入的注意力表示 batch * pre_fc_size 64 * 1024
+
+    def set_memory(self, memory):
+        self.nouns_memory = memory
 
 
 class BaseMemory(nn.Module):
     def __init__(self, opts):
-        pass
+        super(BaseMemory, self).__init__()
+        self.vocabulary = opts.vocabulary  # 词汇索引到单词
+        self.nouns = opts.nouns  # 名词单词到索引
+        self.vocab_size = opts.vocabulary_size  # 9486 词汇表
+        self.nouns_size = opts.nouns_size  # 7668 名词表
+        self.memory_size = opts.memory_size  # 512 记忆表示长度
+        self.nouns_memory = np.zeros((self.nouns_size, self.memory_size), dtype=float)  # 7668 * 512 对所有名词类别的表示，初始化为0
+        self.nouns_counter = np.zeros((self.nouns_size, 1), dtype=int)  # 7668 * 1，存储记忆过程中的计数器，用于计算平均值
 
-    def forward(self, *input):
-        pass
+    def forward(self, att_res, word, stage_id):
+        index = self.nouns.get(self.vocabulary.get(word, "NULL"), -1)
+
+        # 写入模式，查询是否存在这个名词
+        if index > -1:
+            # 确实是一个名词，存下来
+            self.nouns_memory[index] = self.nouns_memory[index] + att_res.numpy()
+            self.nouns_counter[index] += 1
+
+    def get_memory(self):
+        # 返回所有类别
+        return self.nouns_memory
+
+    def finish(self):
+        # 整理所有的记忆，计算算数均值
+        self.nouns_memory = self.nouns_memory / self.nouns_counter

@@ -103,7 +103,7 @@ def train(opts, device):
 
     logging.info("STAGE 1: Training language model")
     logging.info("Start training")
-    opts.stage_id = 1
+
     # 第一阶段，语言模型正常训练，使用对数模型训练
     criterion = Loss.LanguageModelCriterion()
     while True:
@@ -148,7 +148,7 @@ def train(opts, device):
         # 训练诶嘿嘿
         optimizer.zero_grad()
         # start from 1, 0 as START token没， 这里在算loss的时候做了一个特殊操作，就是把BOS去掉了
-        loss = criterion(model(fc_feats, att_feats, captions), captions[:, 1:], masks[:, 1:])
+        loss = criterion(model(fc_feats, att_feats, captions, 1), captions[:, 1:], masks[:, 1:])
         loss.backward()
 
         # 对梯度做处理，防止爆炸或消失
@@ -200,8 +200,8 @@ def train(opts, device):
             history['loss_history'] = loss_history
             history['lr_history'] = lr_history
             history['ss_prob_history'] = ss_prob_history
-            val_loss, lang_stats = validation(opts, model, criterion, loader, info, history, device,
-                                              val_result_history, iteration, best_val_score)
+            val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
+                                      val_result_history, iteration, best_val_score)
             # Write validation result into summary
             if tf is not None:
                 add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -222,7 +222,8 @@ def train(opts, device):
     history['loss_history'] = loss_history
     history['lr_history'] = lr_history
     history['ss_prob_history'] = ss_prob_history
-    val_loss, lang_stats = validation(opts, model, criterion, loader, info, history, device)
+    val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
+                                      val_result_history, iteration, best_val_score)
     # Write validation result into summary
     if tf is not None:
         add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -234,11 +235,13 @@ def train(opts, device):
 
     logging.info("STAGE 2: Extracting memory")
     logging.info("Start training")
-    opts.stage_id = 2
+
     logging.info("Training complete")
+
     logging.info("STAGE 3: Training relation model")
     logging.info("Start training")
-    opts.stage_id = 3
+
+    # 第三阶段，需要将第二阶段生成的
     logging.info("Training complete")
 
 

@@ -131,12 +131,6 @@ def parse_arg():
                         help='Evaluate language as well (1 = yes, 0 = no)? BLEU/CIDEr/METEOR/ROUGE_L? requires '
                              'coco-caption code from Github.')
 
-    parser.add_argument('-stage', '--stage_id',
-                        type=int,
-                        default=1,
-                        choices=[1, 2, 3],
-                        help='The stage of training')
-
     parser.add_argument('-tm', '--train_mode',
                         type=int,
                         default=0,
