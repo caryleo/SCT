@@ -59,6 +59,9 @@ class BaseModel(nn.Module):
     def memory_ready(self):
         self.core.memory_ready()
 
+    def memory_finish(self):
+        return self.core.memory_finish()
+
     def forward(self, fc_feats, att_feats, captions, stage_id):
         batch_size = fc_feats.size(0)  # 64 取batch的大小
         state = self.init_hidden(batch_size)
@@ -125,9 +128,9 @@ class BaseModel(nn.Module):
                             output[i][j] = LMvocab[i][j]
 
             output = F.log_softmax(output)  # 出来的结果做一下log和softmax，这一已经映射到了词汇表 batch * (vocab + 1)
-            outputs.append(output)
+            outputs.append(output) # length (batch * (vocab+1))
 
-        return torch.cat([_.unsqueeze(1) for _ in outputs], 1)
+        return torch.cat([_.unsqueeze(1) for _ in outputs], 1) # batch * length * (vocab + 1)
 
     def get_logprobs_state(self, it, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats, state):
         # 'it' is Variable contraining a word index
@@ -398,7 +401,6 @@ class BaseCore(nn.Module):
         elif stage_id == 2:
             # 第二阶段，还是使用语言模型的输出，但是要存memory
             self.memory(att_res, wordt, stage_id)
-            self.memory.finish()
             rel_res = None
         else:
             # 第三阶段，使用两个网络的模型输出，这里使用一个linear fuse（限名词）
@@ -410,6 +412,11 @@ class BaseCore(nn.Module):
     def memory_ready(self):
         memory = torch.from_numpy(self.memory.get_memory())
         self.relation.set_memory(memory)
+
+    def memory_finish(self):
+        # 完成算数平均值计算，并返回nunpy格式
+        self.memory.finish()
+        return self.memory.get_memory()
 
 
 class BaseAttention(nn.Module):
@@ -449,15 +456,38 @@ class BaseRelation(nn.Module):
         self.vocab_size = opts.vocabulary_size  # 9486 词汇表
         self.nouns_size = opts.nouns_size  # 7668 名词表
         self.rnn_size = opts.rnn_size  # 512 rnn内部表示尺寸
-        self.relation_pre_fc_size = opts.relation_pre_fc_size  # 特征拼接前的线性嵌入块的尺寸 1024
-        self.relation_post_fc_size = opts.relation_post_fc_size  # 特征拼接后的线性嵌入块的尺寸 4096
-        self.pre_fc = nn.Linear(self.rnn_size, self.relation_pre_fc_size)  # 前嵌入
-        self.post_fc = nn.Linear(2 * self.relation_pre_fc_size, self.relation_post_fc_size)  # 后嵌入
+        self.relation_pre_fc_size = opts.relation_pre_fc_size  # 特征拼接前的线性嵌入块的尺寸 512
+        self.relation_post_fc_size = opts.relation_post_fc_size  # 特征拼接后的线性嵌入块的尺寸 512
+        self.pre_fc = nn.Sequential(
+            nn.Linear(self.rnn_size, self.relation_pre_fc_size),  # 前嵌入 512 - 512
+            nn.ReLU()
+        )
+
+        self.post_fc = nn.Sequential(
+            nn.Linear(2 * self.relation_pre_fc_size, self.relation_post_fc_size),  # 后嵌入 1024 - 512
+            nn.ReLU()
+        )
+
+        self.rel_fc = nn.Sequential(
+            nn.Linear(self.relation_pre_fc_size, 1),  # 关系分数计算 512 - 1
+            nn.Sigmoid()
+        )
 
     def forward(self, att_res, stage_id):
         batch_size = att_res(0)  # batch
-        memory_pre = self.relation_pre_fc_size(self.nouns_memory)  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 1024
-        att_pre = self.relation_pre_fc_sizes(att_res)  # 处理输入的注意力表示 batch * pre_fc_size 64 * 1024
+        memory_pre = self.relation_pre_fc_size(self.nouns_memory)  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 512
+        att_pre = self.relation_pre_fc_sizes(att_res)  # 处理输入的注意力表示 batch * pre_fc_size 64 * 512
+
+        memory_pre_ext = memory_pre.unsqueeze(0).repeat(batch_size, 1,
+                                                        1)  # 在最外一维复制batch倍 batch*nouns_size*pre_fc 64*7668*512
+        att_pre_ext = att_pre.unsqueeze(0).repeat(self.nouns_size, 1, 1)  # 同理 nouns_size * batch * pre_fc 7668*64*512
+        att_pre_ext = torch.transpose(att_pre_ext, 0, 1)  # 转置一下注意力矩阵 batch*nouns_size*pre_fc 64*7668*512
+
+        relation_pairs = torch.cat((memory_pre_ext, att_pre_ext), 2).view(-1, 2 * self.relation_pre_fc_size)  # 拼接到一块 (batch*nouns_size) * (2*pre_fc) (64*7668) * (2 * 512)
+
+        relations_post = self.post_fc(relation_pairs) # 做一次非线性嵌入， (batch * nouns_size) * post_fc_size (64 * 7668) * 512
+        relations = self.rel_fc(relations_post).view(-1, self.nouns_size) # 计算关系分数 (batch * nouns_size) * 1 -> batch * nouns_size (64 * 7688) * 1 -> 64 * 7668
+        return relations
 
     def set_memory(self, memory):
         self.nouns_memory = memory
@@ -480,7 +510,7 @@ class BaseMemory(nn.Module):
         # 写入模式，查询是否存在这个名词
         if index > -1:
             # 确实是一个名词，存下来
-            self.nouns_memory[index] = self.nouns_memory[index] + att_res.numpy()
+            self.nouns_memory[index] = self.nouns_memory[index] + att_res.to("cpu", torch.float).numpy()
             self.nouns_counter[index] += 1
 
     def get_memory(self):

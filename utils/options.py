@@ -95,6 +95,11 @@ def parse_arg():
                         default="data/sct_caps.h5",
                         help="path to the input h5 containing the indexed captions and index")
 
+    parser.add_argument('-outmemdir', "--output_memory_directory",
+                        type=str,
+                        default="data/memory",
+                        help="directory for the output memory file")
+
     parser.add_argument('-batch', "--batch_size",
                         default=64,
                         type=int,
@@ -190,12 +195,12 @@ def parse_arg():
 
     parser.add_argument('-prefcsize', '--relation_pre_fc_size',
                         type=int,
-                        default=1024,
+                        default=512,
                         help='size of pre_fc in relation module')
 
     parser.add_argument('-postfcsize', '--relation_post_fc_size',
                         type=int,
-                        default=4096,
+                        default=512,
                         help='size of post_fc in relation module')
 
     # optimization
