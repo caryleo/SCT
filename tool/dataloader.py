@@ -32,7 +32,7 @@ class DataLoader(data.Dataset):
         return self.nouns_size
 
     def get_nouns(self):
-        return self.noun_to_index
+        return self.nouns
 
     def get_seq_length(self):
         return self.max_caption_length
@@ -61,12 +61,13 @@ class DataLoader(data.Dataset):
         logging.info('Loading input json file: %s' % opts.input_json)
         self.input_info_json = json.load(open(self.opts.input_json))
         self.index_to_word = self.input_info_json['index_to_word']
-        self.noun_to_index = self.input_info_json["noun_to_index"]
-        self.nouns_indices = self.input_info_json["nouns_indices"]
+        # self.noun_to_index = self.input_info_json["noun_to_index"]
+        self.nouns = self.input_info_json["nouns"]
+        # self.nouns_indices = self.input_info_json["nouns_indices"]
         self.dict_nouns = self.input_info_json["nouns_in_capions"]
         self.dict_nouns_captions = self.input_info_json["captions_for_nouns"]
         self.vocabulary_size = len(self.index_to_word)
-        self.nouns_size = len(self.nouns_indices)
+        self.nouns_size = len(self.nouns)
         logging.info('Size of vocabulary: %d' % self.vocabulary_size)
         logging.info('Size of noun: %d', self.nouns_size)
         logging.info('Load input json file complete')

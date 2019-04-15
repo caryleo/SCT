@@ -147,7 +147,8 @@ def train(opts, device):
         # 训练诶嘿嘿
         optimizer.zero_grad()
         # start from 1, 0 as START token没， 这里在算loss的时候做了一个特殊操作，就是把BOS去掉了
-        loss = criterion(model(fc_feats, att_feats, captions, 1), captions[:, 1:], masks[:, 1:])
+        outputs, _ = model(fc_feats, att_feats, captions, 1)
+        loss = criterion(outputs, captions[:, 1:], masks[:, 1:])
         loss.backward()
 
         # 对梯度做处理，防止爆炸或消失
@@ -200,7 +201,7 @@ def train(opts, device):
             history['lr_history'] = lr_history
             history['ss_prob_history'] = ss_prob_history
             val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
-                                      val_result_history, iteration, best_val_score)
+                                      val_result_history, iteration, best_val_score, 1)
             # Write validation result into summary
             if tf is not None:
                 add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -220,7 +221,7 @@ def train(opts, device):
             history['lr_history'] = lr_history
             history['ss_prob_history'] = ss_prob_history
             val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
-                                              val_result_history, iteration, best_val_score)
+                                              val_result_history, iteration, best_val_score, 1)
             # Write validation result into summary
             if tf is not None:
                 add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -256,7 +257,8 @@ def train(opts, device):
         fc_feats, att_feats, captions, masks = tmp
 
         # start from 1, 0 as START token没， 这里在算loss的时候做了一个特殊操作，就是把BOS去掉了
-        loss = criterion(model(fc_feats, att_feats, captions, 2), captions[:, 1:], masks[:, 1:])
+        outputs, _ = model(fc_feats, att_feats, captions, 2),
+        loss = criterion(outputs, captions[:, 1:], masks[:, 1:])
         train_loss = loss.item()
 
         torch.cuda.synchronize()
@@ -356,7 +358,8 @@ def train(opts, device):
         # 训练诶嘿嘿
         optimizer.zero_grad()
         # start from 1, 0 as START token没， 这里在算loss的时候做了一个特殊操作，就是把BOS去掉了
-        loss = criterion(model(fc_feats, att_feats, captions, 3), captions[:, 1:], masks[:, 1:])
+        outputs, rel_ress = model(fc_feats, att_feats, captions, 3)
+        loss = criterion(outputs, rel_ress, captions[:, 1:], masks[:, 1:])
         loss.backward()
 
         # 对梯度做处理，防止爆炸或消失
@@ -409,7 +412,7 @@ def train(opts, device):
             history['lr_history'] = lr_history
             history['ss_prob_history'] = ss_prob_history
             val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
-                                      val_result_history, iteration, best_val_score)
+                                      val_result_history, iteration, best_val_score, 3)
             # Write validation result into summary
             if tf is not None:
                 add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -429,7 +432,7 @@ def train(opts, device):
             history['lr_history'] = lr_history
             history['ss_prob_history'] = ss_prob_history
             val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
-                                              val_result_history, iteration, best_val_score)
+                                              val_result_history, iteration, best_val_score, 3)
             # Write validation result into summary
             if tf is not None:
                 add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -442,12 +445,13 @@ def train(opts, device):
 
 
 def validation(opts, model, criterion, optimizer, loader, info, history, device, val_result_history, iteration,
-               best_val_score):
+               best_val_score, stage_id):
     logging.info("Start validation")
     # eval model
     eval_kwargs = {'split': 'val',
                    'dataset': opts.input_json,
-                   'device': device}
+                   'device': device,
+                   'stage': stage_id}
     eval_kwargs.update(vars(opts))
 
     val_loss, predictions, lang_stats = eval_utils.eval_split(model, criterion, loader, eval_kwargs)

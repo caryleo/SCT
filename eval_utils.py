@@ -58,6 +58,8 @@ def eval_split(model, crit, loader, eval_kwargs={}):
     beam_size = eval_kwargs.get('beam_size', 1)
     device = eval_kwargs.get('device', torch.device("cuda:" + eval_kwargs.get('cuda_device', "0")))
     logging.info("Evaluating by device: %s", device)
+    stage_id = eval_kwargs.get('stage', 0)
+
     # Make sure in the evaluation mode
     model.eval()
     # 每一次eval都重置一下 ！！！！
@@ -78,7 +80,13 @@ def eval_split(model, crit, loader, eval_kwargs={}):
             with torch.no_grad():
                 tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
                 fc_feats, att_feats, labels, masks = tmp
-                loss = crit(model(fc_feats, att_feats, labels), labels[:, 1:], masks[:, 1:]).item()
+                outputs, rel_ress = model(fc_feats, att_feats, labels)
+                if stage_id == 1:
+                    loss = crit(outputs, labels[:, 1:], masks[:, 1:]).item()
+                elif stage_id == 3:
+                    loss = crit(outputs, rel_ress, labels[:, 1:], masks[:, 1:]).item()
+                else:
+                    logging.error("INCORRECT STAGE ID!!!")
 
             loss_sum = loss_sum + loss
             loss_evals = loss_evals + 1
