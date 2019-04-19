@@ -106,6 +106,7 @@ class BaseModel(nn.Module):
                 # t=0 送入BOS，其他时刻送入参考caption对应时间点的字符
                 wordt = captions[:, i].clone()
                 # break if all the sequences end
+            # print(captions.size())
             if i >= 1 and captions[:, i].data.sum() == 0:
                 # 如果所有的caption这个时候都是0了，就结束了
                 break
@@ -118,21 +119,26 @@ class BaseModel(nn.Module):
                 # 只使用语言模型输出
                 output = LMvocab
             else:
-                # 使用线性融合 (待优化)
-                for i in range(batch_size):
-                    for j in range(self.vocab_size + 1):
-                        if self.vocabulary.get(output[i][j]) in self.nouns:
-                            index = self.nouns.get(self.vocabulary.get(output[i][j]))
-                            output[i][j] = self.fuse_coefficient * LMvocab[i][j] + \
-                                           (1 - self.fuse_coefficient) * rel_res[i][index]
-                        else:
-                            output[i][j] = LMvocab[i][j]
+                # 使用线性融合
+                # for i in range(batch_size):
+                #     for j in range(self.vocab_size + 1):
+                #         if self.vocabulary.get(output[i][j]) in self.nouns:
+                #             index = self.nouns.get(self.vocabulary.get(output[i][j]))
+                #             output[i][j] = self.fuse_coefficient * LMvocab[i][j] + \
+                #                            (1 - self.fuse_coefficient) * rel_res[i][index]
+                #         else:
+                #             output[i][j] = LMvocab[i][j]
+                rel_others = LMvocab[:, self.nouns_size + 1:] # barch * (vocab - nouns)
+                rel = torch.cat((rel_res, rel_others), 1)
+                output = self.fuse_coefficient * LMvocab + (1 - self.fuse_coefficient) * rel
 
             output = F.log_softmax(output)  # 出来的结果做一下log和softmax，这一已经映射到了词汇表 batch * (vocab + 1)
             outputs.append(output) # length (batch * (vocab+1))
             rel_ress.append(rel_res)
-
-        return torch.cat([_.unsqueeze(1) for _ in outputs], 1), torch.cat([_.unsqueeze(1) for _ in rel_ress], 1) # batch * length * (vocab + 1), batch * length * nouns
+        if stage_id == 1 or stage_id == 2:
+            return torch.cat([_.unsqueeze(1) for _ in outputs], 1), None
+        else:
+            return torch.cat([_.unsqueeze(1) for _ in outputs], 1), torch.cat([_.unsqueeze(1) for _ in rel_ress], 1) # batch * length * (vocab + 1), batch * length * nouns
 
     def get_logprobs_state(self, it, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats, state):
         # 'it' is Variable contraining a word index
@@ -184,7 +190,7 @@ class BaseModel(nn.Module):
         # return the samples and their log likelihoods
         return seq.transpose(0, 1), seqLogprobs.transpose(0, 1)
 
-    def sample(self, fc_feats, att_feats, opts={}):
+    def sample(self, fc_feats, att_feats, stage_id, opts={}):
         sample_max = opts.get('sample_greedy', 1)
         beam_size = opts.get('beam_size', 1)
         temperature = opts.get('temperature', 1.0)
@@ -238,8 +244,25 @@ class BaseModel(nn.Module):
 
                 seqLogprobs.append(sampleLogprobs.view(-1))
 
-            output, state = self.core(xt, fc_feats, att_feats, p_att_feats, state)
-            logprobs = F.log_softmax(self.logit(output))
+            output, state, rel_ress = self.core(xt, fc_feats, att_feats, p_att_feats, state, stage_id)
+            LMvocab = self.logit(output)
+            if stage_id == 1 or stage_id == 2:
+                # 只使用语言模型输出
+                output = LMvocab
+            else:
+                # 使用线性融合
+                # for i in range(batch_size):
+                #     for j in range(self.vocab_size + 1):
+                #         if self.vocabulary.get(output[i][j]) in self.nouns:
+                #             index = self.nouns.get(self.vocabulary.get(output[i][j]))
+                #             output[i][j] = self.fuse_coefficient * LMvocab[i][j] + \
+                #                            (1 - self.fuse_coefficient) * rel_res[i][index]
+                #         else:
+                #             output[i][j] = LMvocab[i][j]
+                rel_others = LMvocab[:, self.nouns_size + 1:]  # barch * (vocab - nouns)
+                rel = torch.cat((rel_ress, rel_others), 1)
+                output = self.fuse_coefficient * LMvocab + (1 - self.fuse_coefficient) * rel
+            logprobs = F.log_softmax(output)
 
         return torch.cat([_.unsqueeze(1) for _ in seq], 1), torch.cat([_.unsqueeze(1) for _ in seqLogprobs], 1)
 
@@ -377,12 +400,12 @@ class BaseCore(nn.Module):
         self.relation = BaseRelation(opts)
 
     def forward(self, xt, fc_feats, att_feats, internal_att_feats, state, stage_id):
-        att_res = self.attention(state[0][-1], att_feats, internal_att_feats, )  # 先把att算出来 batch*rnn_size 64*512
+        att_res = self.attention(state[0][-1], att_feats, internal_att_feats)  # 先把att算出来 batch*rnn_size 64*512
 
         all_input_sums = self.i2h(xt) + self.h2h(
             state[0][-1])  # 先把x和h的线性嵌入加起来，准备计算三个门，前三个rnn_size batch*(5*rnn_size) 64*2560
         sigmoid_chunk = all_input_sums.narrow(1, 0, 3 * self.rnn_size)  # 前三个部分 batch*(3*rnn_size) 64 * 1536
-        sigmoid_chunk = F.sigmoid(sigmoid_chunk)  # sigmoid变换 batch * (3*rnn_size) 64*1536
+        sigmoid_chunk = torch.sigmoid(sigmoid_chunk)  # sigmoid变换 batch * (3*rnn_size) 64*1536
         in_gate = sigmoid_chunk.narrow(1, 0, self.rnn_size)  # 输入门
         forget_gate = sigmoid_chunk.narrow(1, self.rnn_size, self.rnn_size)  # 忘记门
         out_gate = sigmoid_chunk.narrow(1, self.rnn_size * 2, self.rnn_size)  # 输出门
@@ -394,7 +417,7 @@ class BaseCore(nn.Module):
             in_transform.narrow(1, self.rnn_size, self.rnn_size))  # maxout
 
         next_c = forget_gate * state[1][-1] + in_gate * in_transform  # c batch*rnn_size 64*512
-        next_h = out_gate * F.tanh(next_c)  # h batch * rnn_size 64 * 512
+        next_h = out_gate * torch.tanh(next_c)  # h batch * rnn_size 64 * 512
         output = self.dropout(next_h)  # 对输出，做一个dropout
 
         if stage_id == 1:
@@ -440,7 +463,7 @@ class BaseAttention(nn.Module):
         att_h = self.h2att(h)  # 先把hid部分转换一下，batch * att_hid_size，64 * 512
         att_h = att_h.unsqueeze(1).expand_as(att)  # 针对每一个空间特征，复制一遍，batch * att_size * att_hid_size，64 * 196 * 512
         dot = att + att_h  # att部分和hid部分加在一起，batch * att_size * att_hid_size，64 * 196 * 512
-        dot = F.tanh(dot)  # tanh变化，batch * att_size * att_hid_size，64*196*512
+        dot = torch.tanh(dot)  # tanh变化，batch * att_size * att_hid_size，64*196*512
         dot = dot.view(-1, self.att_hid_size)  # 变成两维度好计算，(batch * att_size) * att_hid_size，（64*196）*512
         dot = self.alpha_net(dot)  # 映射到区域注意力分数，(batch * att_size) * 1，（64*196）*1
         dot = dot.view(-1, att_size)  # 针对各个空间区域的分数，batch * att_size，64*196

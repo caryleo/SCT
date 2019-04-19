@@ -152,7 +152,7 @@ def preprocess_captions(opts):
             dict_word_to_index[word] = noun_count
             noun_count += 1
         else:
-            dict_word_to_index[other_count] = word
+            dict_index_to_word[other_count] = word
             dict_word_to_index[word] = other_count
             other_count += 1
 

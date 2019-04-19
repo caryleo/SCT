@@ -64,12 +64,12 @@ class DataLoader(data.Dataset):
         # self.noun_to_index = self.input_info_json["noun_to_index"]
         self.nouns = self.input_info_json["nouns"]
         # self.nouns_indices = self.input_info_json["nouns_indices"]
-        self.dict_nouns = self.input_info_json["nouns_in_capions"]
+        self.dict_nouns = self.input_info_json["nouns_in_captions"]
         self.dict_nouns_captions = self.input_info_json["captions_for_nouns"]
         self.vocabulary_size = len(self.index_to_word)
         self.nouns_size = len(self.nouns)
         logging.info('Size of vocabulary: %d' % self.vocabulary_size)
-        logging.info('Size of noun: %d', self.nouns_size)
+        logging.info('Size of nouns: %d', self.nouns_size)
         logging.info('Load input json file complete')
 
         # load the captions h5 with memory mapping

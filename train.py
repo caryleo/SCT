@@ -96,6 +96,7 @@ def train(opts, device):
 
     # Adam优化
     optimizer = optim.Adam(model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay)
+    logging.debug(model)
 
     # Load the optimizer 如果存在数据，加载优化数据
     if vars(opts).get('start_from', None) is not None:

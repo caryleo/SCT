@@ -80,7 +80,7 @@ def eval_split(model, crit, loader, eval_kwargs={}):
             with torch.no_grad():
                 tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
                 fc_feats, att_feats, labels, masks = tmp
-                outputs, rel_ress = model(fc_feats, att_feats, labels)
+                outputs, rel_ress = model(fc_feats, att_feats, labels, stage_id)
                 if stage_id == 1:
                     loss = crit(outputs, labels[:, 1:], masks[:, 1:]).item()
                 elif stage_id == 3:
@@ -99,7 +99,7 @@ def eval_split(model, crit, loader, eval_kwargs={}):
             tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
             fc_feats, att_feats = tmp
             # forward the model to also get generated samples for each image
-            seq, _ = model.sample(fc_feats, att_feats, eval_kwargs)
+            seq, _ = model.sample(fc_feats, att_feats, stage_id, eval_kwargs)
 
         seq = seq.to("cpu").numpy()
 

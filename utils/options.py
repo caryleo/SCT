@@ -308,7 +308,7 @@ def parse_arg():
 
     parser.add_argument('-savechkpteve', '--save_checkpoint_every',
                         type=int,
-                        default=2500,
+                        default=500,
                         help='how often to save a model checkpoint (in iterations)')
 
     # evaluation
