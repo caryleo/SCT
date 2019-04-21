@@ -2,6 +2,7 @@
 FILENAME:       MODELS/BaseModel
 DESCRIPTION:    BaseModel for SCT
 """
+import os
 
 import torch
 import torch.nn as nn
@@ -62,6 +63,9 @@ class BaseModel(nn.Module):
     def memory_finish(self):
         return self.core.memory_finish()
 
+    def set_memory(self, memory):
+        self.core.set_memory(memory)
+
     def forward(self, fc_feats, att_feats, captions, stage_id):
         batch_size = fc_feats.size(0)  # 64 取batch的大小
         state = self.init_hidden(batch_size)
@@ -113,7 +117,7 @@ class BaseModel(nn.Module):
 
             xt = self.word_embed(wordt)  # 将单词编码，batch * encoding，64*9487 - 64*512
 
-            output, state, rel_res = self.core(xt, fc_feats, att_feats, context_att_feats, state, stage_id)
+            output, state, rel_res = self.core(wordt, xt, fc_feats, att_feats, context_att_feats, state, stage_id)
             LMvocab = self.logit(output)
             if stage_id == 1 or stage_id == 2:
                 # 只使用语言模型输出
@@ -132,7 +136,7 @@ class BaseModel(nn.Module):
                 rel = torch.cat((rel_res, rel_others), 1)
                 output = self.fuse_coefficient * LMvocab + (1 - self.fuse_coefficient) * rel
 
-            output = F.log_softmax(output)  # 出来的结果做一下log和softmax，这一已经映射到了词汇表 batch * (vocab + 1)
+            output = F.log_softmax(output, 1)  # 出来的结果做一下log和softmax，这一已经映射到了词汇表 batch * (vocab + 1)
             outputs.append(output) # length (batch * (vocab+1))
             rel_ress.append(rel_res)
         if stage_id == 1 or stage_id == 2:
@@ -144,12 +148,12 @@ class BaseModel(nn.Module):
         # 'it' is Variable contraining a word index
         xt = self.word_embed(it)
 
-        output, state = self.core(xt, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats, state)
+        output, state = self.core(it, xt, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats, state)
         logprobs = F.log_softmax(self.logit(output))
 
         return logprobs, state
 
-    def sample_beam(self, fc_feats, att_feats, opts={}):
+    def sample_beam(self, fc_feats, att_feats, stage_id, opts={}):
         beam_size = opts.get('beam_size', 64)  # batch
         batch_size = fc_feats.size(0)
 
@@ -180,7 +184,7 @@ class BaseModel(nn.Module):
                     it.requires_grad = False
                     xt = self.word_embed(it)
 
-                output, state = self.core(xt, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats, state)
+                output, state, rel_ress = self.core(it, xt, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats, state, stage_id)
                 logprobs = F.log_softmax(self.logit(output))
 
             self.done_beams[k] = self.beam_search(state, logprobs, tmp_fc_feats, tmp_att_feats, tmp_p_att_feats,
@@ -194,8 +198,8 @@ class BaseModel(nn.Module):
         sample_max = opts.get('sample_greedy', 1)
         beam_size = opts.get('beam_size', 1)
         temperature = opts.get('temperature', 1.0)
-        if beam_size > 1:
-            return self.sample_beam(fc_feats, att_feats, opts)
+        if beam_size > 1: # 因为目前用不上beam search，因此这部分先不改了
+            return self.sample_beam(fc_feats, att_feats, stage_id, opts)
 
         batch_size = fc_feats.size(0)
         state = self.init_hidden(batch_size)
@@ -209,11 +213,13 @@ class BaseModel(nn.Module):
         p_att_feats = self.ctx2att(att_feats.view(-1, self.rnn_size))
         p_att_feats = p_att_feats.view(*(att_feats.size()[:-1] + (self.att_hid_size,)))
 
-        seq = []
-        seqLogprobs = []
+        seq = list()
+        seqLogprobs = list()
+        rel_ress = list()
         for t in range(self.max_caption_length + 1):
             if t == 0:  # input <bos> # 采样时，使用fc的信息做参考生成一个batch_size的全零向量做BOS
                 it = fc_feats.data.new(batch_size).long().zero_()
+                rel_res = None
             elif sample_max:  # 其他情况下，贪婪编码，去最大概率即可
                 sampleLogprobs, it = torch.max(logprobs.data, 1)
                 it = it.view(-1).long()
@@ -227,9 +233,8 @@ class BaseModel(nn.Module):
                 sampleLogprobs = logprobs.gather(1, it)  # gather the logprobs at sampled positions
                 it = it.view(-1).long()  # and flatten indices for downstream processing
             # 作为下一个时间点的输入
-
             it.requires_grad = False
-            xt = self.word_embed(it)
+            xt = self.word_embed(it) # 取前一个的采样结果作为输入
 
             if t >= 1:
                 # stop when all finished
@@ -237,34 +242,33 @@ class BaseModel(nn.Module):
                     unfinished = it > 0
                 else:
                     unfinished = unfinished * (it > 0)
+
                 if unfinished.sum() == 0:
                     break
+
                 it = it * unfinished.type_as(it)
-                seq.append(it)  # seq[t] the input of t+2 time step
+                seq.append(it)  # seq[t] the input of t+2 time step 最后 seq是各个时间点（t-2个，少了BOS和EOS）的 batch * 1
+                seqLogprobs.append(sampleLogprobs.view(-1)) # 同样，t-2个 batch * 1
+                rel_ress.append(rel_res)
 
-                seqLogprobs.append(sampleLogprobs.view(-1))
-
-            output, state, rel_ress = self.core(xt, fc_feats, att_feats, p_att_feats, state, stage_id)
+            output, state, rel_res = self.core(it, xt, fc_feats, att_feats, p_att_feats, state, stage_id)
             LMvocab = self.logit(output)
             if stage_id == 1 or stage_id == 2:
                 # 只使用语言模型输出
                 output = LMvocab
             else:
                 # 使用线性融合
-                # for i in range(batch_size):
-                #     for j in range(self.vocab_size + 1):
-                #         if self.vocabulary.get(output[i][j]) in self.nouns:
-                #             index = self.nouns.get(self.vocabulary.get(output[i][j]))
-                #             output[i][j] = self.fuse_coefficient * LMvocab[i][j] + \
-                #                            (1 - self.fuse_coefficient) * rel_res[i][index]
-                #         else:
-                #             output[i][j] = LMvocab[i][j]
                 rel_others = LMvocab[:, self.nouns_size + 1:]  # barch * (vocab - nouns)
-                rel = torch.cat((rel_ress, rel_others), 1)
+                rel = torch.cat((rel_res, rel_others), 1)
                 output = self.fuse_coefficient * LMvocab + (1 - self.fuse_coefficient) * rel
-            logprobs = F.log_softmax(output)
 
-        return torch.cat([_.unsqueeze(1) for _ in seq], 1), torch.cat([_.unsqueeze(1) for _ in seqLogprobs], 1)
+            logprobs = F.log_softmax(output, 1)
+
+        # return torch.cat([_.unsqueeze(1) for _ in seq], 1), torch.cat([_.unsqueeze(1) for _ in seqLogprobs], 1)
+        if stage_id == 1 or stage_id == 2:
+            return torch.cat([_.unsqueeze(1) for _ in seq], 1), torch.cat([_.unsqueeze(1) for _ in seqLogprobs], 1), None
+        else:
+            return torch.cat([_.unsqueeze(1) for _ in seq], 1), torch.cat([_.unsqueeze(1) for _ in seqLogprobs], 1), torch.cat([_.unsqueeze(1) for _ in rel_ress], 1)
 
     def beam_search(self, state, logprobs, *args, **kwargs):
         # args are the miscelleous inputs to the core in addition to embedded word and state
@@ -399,7 +403,7 @@ class BaseCore(nn.Module):
         self.memory = BaseMemory(opts)
         self.relation = BaseRelation(opts)
 
-    def forward(self, xt, fc_feats, att_feats, internal_att_feats, state, stage_id):
+    def forward(self, wordt, xt, fc_feats, att_feats, internal_att_feats, state, stage_id):
         att_res = self.attention(state[0][-1], att_feats, internal_att_feats)  # 先把att算出来 batch*rnn_size 64*512
 
         all_input_sums = self.i2h(xt) + self.h2h(
@@ -425,7 +429,7 @@ class BaseCore(nn.Module):
             rel_res = None
         elif stage_id == 2:
             # 第二阶段，还是使用语言模型的输出，但是要存memory
-            self.memory(att_res, xt, stage_id)
+            self.memory(att_res, wordt, stage_id)
             rel_res = None
         else:
             # 第三阶段，使用两个网络的模型输出，这里使用一个linear fuse（限名词）
@@ -435,13 +439,16 @@ class BaseCore(nn.Module):
         return output, state, rel_res
 
     def memory_ready(self):
-        memory = torch.from_numpy(self.memory.get_memory())
+        memory = torch.from_numpy(self.memory.get_memory()).to(self.opts.device, torch.float)
         self.relation.set_memory(memory)
 
     def memory_finish(self):
         # 完成算数平均值计算，并返回nunpy格式
         self.memory.finish()
         return self.memory.get_memory()
+
+    def set_memory(self, memory):
+        self.memory.set_memory(memory)
 
 
 class BaseAttention(nn.Module):
@@ -468,7 +475,7 @@ class BaseAttention(nn.Module):
         dot = self.alpha_net(dot)  # 映射到区域注意力分数，(batch * att_size) * 1，（64*196）*1
         dot = dot.view(-1, att_size)  # 针对各个空间区域的分数，batch * att_size，64*196
 
-        weight = F.softmax(dot)  # 针对没一个区域的softmax，batch * att_size，64*196
+        weight = F.softmax(dot, 1)  # 针对没一个区域的softmax，batch * att_size，64*196
         att_feats_ = att_feats.view(-1, att_size, self.rnn_size)  # 把空间区域部分展开 batch * att_size * rnn_size 64*196*512
         att_res = torch.bmm(weight.unsqueeze(1), att_feats_).squeeze(1)  # 注意力结果 batch * rnn_size 64*512
 
@@ -478,6 +485,7 @@ class BaseAttention(nn.Module):
 class BaseRelation(nn.Module):
     def __init__(self, opts):
         super(BaseRelation, self).__init__()
+        self.opts = opts
         self.vocab_size = opts.vocabulary_size  # 9486 词汇表
         self.nouns_size = opts.nouns_size  # 7668 名词表
         self.rnn_size = opts.rnn_size  # 512 rnn内部表示尺寸
@@ -499,23 +507,25 @@ class BaseRelation(nn.Module):
         )
 
     def forward(self, att_res, stage_id):
-        batch_size = att_res(0)  # batch
-        memory_pre = self.relation_pre_fc_size(self.nouns_memory)  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 512
-        att_pre = self.relation_pre_fc_sizes(att_res)  # 处理输入的注意力表示 batch * pre_fc_size 64 * 512
+        batch_size = att_res.size(0)  # batch
+        memory_pre = self.pre_fc(self.nouns_memory)  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 512
+        att_pre = self.pre_fc(att_res)  # 处理输入的注意力表示 batch * pre_fc_size 64 * 512
 
         memory_pre_ext = memory_pre.unsqueeze(0).repeat(batch_size, 1,
                                                         1)  # 在最外一维复制batch倍 batch*nouns_size*pre_fc 64*7668*512
         att_pre_ext = att_pre.unsqueeze(0).repeat(self.nouns_size, 1, 1)  # 同理 nouns_size * batch * pre_fc 7668*64*512
         att_pre_ext = torch.transpose(att_pre_ext, 0, 1)  # 转置一下注意力矩阵 batch*nouns_size*pre_fc 64*7668*512
-
-        relation_pairs = torch.cat((memory_pre_ext, att_pre_ext), 2).view(-1, 2 * self.relation_pre_fc_size)  # 拼接到一块 (batch*nouns_size) * (2*pre_fc) (64*7668) * (2 * 512)
+        # print(memory_pre_ext.size())
+        # print(att_pre_ext.size())
+        relation_pairs = torch.cat((memory_pre_ext, att_pre_ext), 2).reshape(-1, 2 * self.relation_pre_fc_size)  # 拼接到一块 (batch*nouns_size) * (2*pre_fc) (64*7668) * (2 * 512)
 
         relations_post = self.post_fc(relation_pairs) # 做一次非线性嵌入， (batch * nouns_size) * post_fc_size (64 * 7668) * 512
         relations = self.rel_fc(relations_post).view(-1, self.nouns_size) # 计算关系分数 (batch * nouns_size) * 1 -> batch * nouns_size (64 * 7688) * 1 -> 64 * 7668
         return relations
 
     def set_memory(self, memory):
-        self.nouns_memory = memory
+        self.nouns_memory = memory[1:, :]
+        self.nouns_memory.to(self.opts.device)
 
 
 class BaseMemory(nn.Module):
@@ -529,15 +539,18 @@ class BaseMemory(nn.Module):
         self.nouns_memory = np.zeros((self.nouns_size + 1, self.memory_size), dtype=float)  # 7668 * 512 对所有名词类别的表示，初始化为0, 0位无效
         self.nouns_counter = np.zeros((self.nouns_size + 1, 1), dtype=int)  # 7668 * 1，存储记忆过程中的计数器，用于计算平均值
 
-    def forward(self, att_res, xt, stage_id):
-        batch_size = att_res[0]
+    def forward(self, att_res, wordt, stage_id):
+        batch_size = att_res.size(0)
         # 写入模式，查询是否存在这个名词
-        is_nouns = xt.le(self.nouns_size) # batch * 1
-        xt_nouns = (xt * is_nouns).type
+        is_nouns = wordt.le(self.nouns_size).type_as(wordt) # batch * 1
+        xt_nouns = (wordt * is_nouns)
+
+        nouns = xt_nouns.to(torch.device("cpu")).numpy()
+        att_ress = att_res.to(torch.device("cpu")).numpy()
 
         for i in range(batch_size):
-            self.nouns_memory[xt_nouns[i]] = self.nouns_memory[xt_nouns[i]] + att_res[i].to("cpu", torch.float).numpy()
-            self.nouns_counter[xt_nouns[i]] += 1
+            self.nouns_memory[nouns[i]] = self.nouns_memory[nouns[i]] + att_ress[i]
+            self.nouns_counter[nouns[i]] += 1
 
     def get_memory(self):
         # 返回所有类别
@@ -546,3 +559,6 @@ class BaseMemory(nn.Module):
     def finish(self):
         # 整理所有的记忆，计算算数均值
         self.nouns_memory = self.nouns_memory / self.nouns_counter
+
+    def set_memory(self, memory):
+        self.nouns_memory = self.nouns_memory + memory

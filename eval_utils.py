@@ -48,9 +48,7 @@ def language_eval(dataset, preds, model_id, split):
 
     return out
 
-
 def eval_split(model, crit, loader, eval_kwargs={}):
-    verbose = eval_kwargs.get('verbose', True)
     num_images = eval_kwargs.get('num_images', eval_kwargs.get('val_images_use', -1))
     split = eval_kwargs.get('split', 'val')
     lang_eval = eval_kwargs.get('language_eval', 0)
@@ -75,13 +73,13 @@ def eval_split(model, crit, loader, eval_kwargs={}):
         n = n + loader.batch_size
 
         if data.get('captions', None) is not None:
-            # forward the model to get loss
+            # forward the model to get loss 这一部分直接出loss
             tmp = [data['fc_feats'], data['att_feats'], data['captions'], data['masks']]
             with torch.no_grad():
                 tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
                 fc_feats, att_feats, labels, masks = tmp
                 outputs, rel_ress = model(fc_feats, att_feats, labels, stage_id)
-                if stage_id == 1:
+                if stage_id == 1 or stage_id == 2: #
                     loss = crit(outputs, labels[:, 1:], masks[:, 1:]).item()
                 elif stage_id == 3:
                     loss = crit(outputs, rel_ress, labels[:, 1:], masks[:, 1:]).item()
@@ -92,14 +90,14 @@ def eval_split(model, crit, loader, eval_kwargs={}):
             loss_evals = loss_evals + 1
 
         # forward the model to also get generated samples for each image
-        # Only leave one feature for each image, in case duplicate sample
+        # Only leave one feature for each image, in case duplicate sample 为啥要这么写呀？？？
         tmp = [data['fc_feats'][np.arange(loader.batch_size) * loader.captions_per_image],
                data['att_feats'][np.arange(loader.batch_size) * loader.captions_per_image]]
         with torch.no_grad():
             tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
             fc_feats, att_feats = tmp
-            # forward the model to also get generated samples for each image
-            seq, _ = model.sample(fc_feats, att_feats, stage_id, eval_kwargs)
+            # forward the model to also get generated samples for each image 取样评估整体性能
+            seq, _, _ = model.sample(fc_feats, att_feats, stage_id, eval_kwargs)
 
         seq = seq.to("cpu").numpy()
 
@@ -119,30 +117,35 @@ def eval_split(model, crit, loader, eval_kwargs={}):
                 logging.info("Executing: %s" % cmd)
                 os.system(cmd)
 
-            if verbose:
-                logging.debug('image %s: %s' % (entry['image_id'], entry['caption']))
+            logging.debug('image %s: %s' % (entry['image_id'], entry['caption']))
 
         # if we wrapped around the split or used up val imgs budget then bail
         ix0 = data['bounds']['it_pos_now']
         ix1 = data['bounds']['it_max']
+
         if num_images != -1:
             ix1 = min(ix1, num_images)
 
         for i in range(n - ix1):
             predictions.pop()
 
-        if verbose:
+        logging.debug('evaluating validation performance... %d / %d (%f)' % (ix0 - 1, ix1, loss))
+        if (ix0 - 1) % (loader.batch_size * 10) == 0 :
             logging.info('evaluating validation performance... %d / %d (%f)' % (ix0 - 1, ix1, loss))
+        # if (ix0 - 1) % (loader.batch_size * 10):
+        #     logging.debug('evaluating validation performance... %d / %d (%f)' % (ix0 - 1, ix1, loss))
 
         if data['bounds']['wrapped']:
             break
+
         if 0 <= num_images <= n:
             break
 
+    logging.getLogger('').setLevel(logging.ERROR)
     lang_stats = None
     if lang_eval == 1:
         lang_stats = language_eval(dataset, predictions, eval_kwargs['train_id'], split)
-
+    logging.getLogger('').setLevel(logging.INFO)
     # Switch back to training mode
     model.train()
     return loss_sum / loss_evals, predictions, lang_stats

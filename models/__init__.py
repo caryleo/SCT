@@ -14,7 +14,7 @@ from .RelationModel import RelationModel
 from .OutputModel import OutputModel
 
 
-def setup(opts):
+def setup(opts, stage_id):
     logging.info("Preparing model: %s" % opts.caption_model)
     if opts.caption_model == "base":
         model = BaseModel(opts)
@@ -33,10 +33,19 @@ def setup(opts):
 
     if vars(opts).get('start_from', None) is not None:
         # check if all necessary files exist
-        logging.info("Load parameters from info.pkl")
+        logging.info("Resuming from existing data, Load parameters from info.pkl")
         assert os.path.isdir(opts.start_from), "%s must be a a path" % opts.start_from
         assert os.path.isfile(os.path.join(opts.start_from, "info_" + opts.train_id + ".pkl")),\
             "info.pkl file does not exist in path %s" % opts.start_from
         model.load_state_dict(torch.load(os.path.join(opts.start_from, 'model.pth')))
-
-    return model
+        return model
+    elif stage_id == 2 or stage_id == 3:
+        # 如果是指明了stage，没有指明start from，就加载最佳模型
+        logging.warning("Skipping stages, Loading parameters from info-best.pkl")
+        assert os.path.isdir(opts.train_directory), "%s must be a directory" % opts.train_directory
+        assert os.path.isfile(os.path.join(opts.train_directory, "info_" + opts.train_id + "-best.pkl")),\
+            "no info-best.pkl in the directory"
+        model.load_state_dict(torch.load(os.path.join(opts.train_directory, 'model-best.pth')))
+        return model
+    else:
+        return model

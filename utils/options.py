@@ -23,6 +23,7 @@ def parse_arg():
 
     # cuda device
     parser.add_argument('-cuda', "--cuda_device",
+                        type=int,
                         default=0,
                         help="The cuda device")
 
@@ -100,6 +101,11 @@ def parse_arg():
                         default="data/memory",
                         help="directory for the output memory file")
 
+    parser.add_argument('-inmemh5', '--input_memory_h5',
+                        type=str,
+                        default='',
+                        help='h5 file for input memory if skipping to stage 3')
+
     parser.add_argument('-batch', "--batch_size",
                         default=64,
                         type=int,
@@ -139,8 +145,13 @@ def parse_arg():
     parser.add_argument('-tm', '--train_mode',
                         type=int,
                         default=0,
-                        choices=[1, 2, 3],
+                        choices=[0, 1, 2, 3],
                         help='The stage of training to start from, 0 for all')
+
+    parser.add_argument('-tdir', '--train_directory',
+                        type=str,
+                        default=None,
+                        help="Need a skip?, tell me where to get the model and info")
 
     # model
     parser.add_argument('-model', '--caption_model',
@@ -405,6 +416,7 @@ def parse_arg():
                         type=int,
                         default=0,
                         help='if we need to calculate loss.')
+
 
     opts = parser.parse_args()
 

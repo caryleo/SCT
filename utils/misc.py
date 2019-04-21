@@ -5,7 +5,7 @@ DESCRIPTION:    miscellaneous functions
 
 
 # Input: seq, N*D numpy array, with element 0 .. vocab_size. 0 is END token.
-def decode_sequence(ix_to_word, seq):
+def decode_sequence(index_to_word, seq):
     N, D = seq.shape
     out = []
     for i in range(N):
@@ -15,7 +15,7 @@ def decode_sequence(ix_to_word, seq):
             if ix > 0:
                 if j >= 1:
                     txt = txt + ' '
-                txt = txt + ix_to_word[str(ix)]
+                txt = txt + index_to_word[str(ix)]
             else:
                 break
         out.append(txt)

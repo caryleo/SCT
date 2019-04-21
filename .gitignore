@@ -160,3 +160,5 @@ fabric.properties
 
 /coco-caption/
 /data/
+/checkpoints/
+/log/
