@@ -31,6 +31,7 @@ class LanguageModelCriterion(nn.Module):
 class RelationClassificationCriterion(nn.Module):
     def __init__(self, opts):
         super(RelationClassificationCriterion, self).__init__()
+        self.opts = opts
         self.vocab_size = opts.vocabulary_size  # 9486 词汇表
         self.nouns_size = opts.nouns_size  # 7668 名词表
         self.vocabulary = opts.vocabulary  # 词汇索引到单词
@@ -38,14 +39,29 @@ class RelationClassificationCriterion(nn.Module):
 
     def forward(self, rel_ress, targets, mask):
         crit = nn.MSELoss()
+
         targets = targets[:, : rel_ress.shape[1]]
         mask = mask[:, : rel_ress.shape[1]]
+
+        # 注意这里：和输出部分一样，这里没有针对BOS做处理，需要额外特殊处理一下，
         rel_ress = to_contiguous(rel_ress).view(-1, self.nouns_size) # (batch * length) * nouns
         targets = to_contiguous(targets).view(-1, 1) # (batch * length) * 1
         mask = to_contiguous(mask).view(-1, 1) # (batch * length) * 1
-        targets_nouns_mask = targets.le(self.nouns_size).float() # 判断那些是名词 (batch * length) * 1
-        targets_onehot = torch.zeros(rel_ress.shape[0], rel_ress.shape[1]).scatter_(1, targets, targets_nouns_mask) # 制造对应类别的onehot，对与非名词，直接zerohot
-        return crit(rel_ress, targets)
+        rel_zero = torch.zeros(rel_ress.size(0), 1).to(self.opts.device)
+        rel = torch.cat((rel_zero, rel_ress), 1)
+
+        targets_nouns_mask = targets.le(self.nouns_size).float().to(self.opts.device) # 判断那些是名词 (batch * length) * 1
+        targets = targets.float() * targets_nouns_mask
+        targets_onehot = torch.zeros(rel.shape[0], rel.shape[1]).to(self.opts.device)
+
+        # print(rel_ress.size())
+        # print(targets.size())
+        # print(rel.size())
+        # print(targets_nouns_mask.size())
+        # print(targets_onehot.size())
+
+        targets_onehot.scatter_(1, targets.long(), targets_nouns_mask) # 制造对应类别的onehot，对与非名词，直接zerohot
+        return crit(rel, targets_onehot)
 
 
 # stage 3 fuse loss

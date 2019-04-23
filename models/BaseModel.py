@@ -15,6 +15,7 @@ class BaseModel(nn.Module):
         super(BaseModel, self).__init__()
 
         # self.rnn_type = opts.rnn_type
+        self.opts = opts
         self.rnn_size = opts.rnn_size  # 512 rnn隐藏单元个数
         self.num_layers = opts.num_layers  # 1 LSTM层数，在这个模型里面没有意义
         self.drop_prob_lm = opts.dropout_prob  # dropout概率，暂时不管
@@ -132,12 +133,17 @@ class BaseModel(nn.Module):
                 #                            (1 - self.fuse_coefficient) * rel_res[i][index]
                 #         else:
                 #             output[i][j] = LMvocab[i][j]
-                rel_others = LMvocab[:, self.nouns_size + 1:] # barch * (vocab - nouns)
-                rel = torch.cat((rel_res, rel_others), 1)
+                rel_zero = LMvocab[:, 0].view(-1, 1)
+                rel_others = LMvocab[:, self.nouns_size + 1:]  # barch * (vocab - nouns)
+                # print(rel_res.size())
+                # print(rel_zero.size())
+                # print(rel_others.size())
+                rel = torch.cat((rel_zero, rel_res, rel_others), 1)
                 output = self.fuse_coefficient * LMvocab + (1 - self.fuse_coefficient) * rel
 
             output = F.log_softmax(output, 1)  # 出来的结果做一下log和softmax，这一已经映射到了词汇表 batch * (vocab + 1)
             outputs.append(output) # length (batch * (vocab+1))
+            rel_res = F.softmax(rel_res, 1)
             rel_ress.append(rel_res)
         if stage_id == 1 or stage_id == 2:
             return torch.cat([_.unsqueeze(1) for _ in outputs], 1), None
@@ -228,8 +234,8 @@ class BaseModel(nn.Module):
                     prob_prev = torch.exp(logprobs.data).to("cpu")  # fetch prev distribution: shape Nx(M+1)
                 else:
                     # scale logprobs by temperature
-                    prob_prev = torch.exp(torch.div(logprobs.data, temperature)).to("cpu")
-                it = torch.multinomial(prob_prev, 1).cuda()
+                    prob_prev = torch.exp(torch.div(logprobs.data, temperature)).to(torch.device("cpu"))
+                it = torch.multinomial(prob_prev, 1).to(self.opts.device)
                 sampleLogprobs = logprobs.gather(1, it)  # gather the logprobs at sampled positions
                 it = it.view(-1).long()  # and flatten indices for downstream processing
             # 作为下一个时间点的输入
@@ -258,8 +264,10 @@ class BaseModel(nn.Module):
                 output = LMvocab
             else:
                 # 使用线性融合
+                rel_zero = LMvocab[:, 0].view(-1, 1)
                 rel_others = LMvocab[:, self.nouns_size + 1:]  # barch * (vocab - nouns)
-                rel = torch.cat((rel_res, rel_others), 1)
+                rel = torch.cat((rel_zero, rel_res, rel_others), 1)
+
                 output = self.fuse_coefficient * LMvocab + (1 - self.fuse_coefficient) * rel
 
             logprobs = F.log_softmax(output, 1)
@@ -502,24 +510,24 @@ class BaseRelation(nn.Module):
         )
 
         self.rel_fc = nn.Sequential(
-            nn.Linear(self.relation_pre_fc_size, 1),  # 关系分数计算 512 - 1
+            nn.Linear(self.relation_post_fc_size, 1),  # 关系分数计算 512 - 1
             nn.Sigmoid()
         )
 
     def forward(self, att_res, stage_id):
         batch_size = att_res.size(0)  # batch
-        memory_pre = self.pre_fc(self.nouns_memory)  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 512
-        att_pre = self.pre_fc(att_res)  # 处理输入的注意力表示 batch * pre_fc_size 64 * 512
+        memory_pre = self.pre_fc(self.nouns_memory)  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 128
+        att_pre = self.pre_fc(att_res)  # 处理输入的注意力表示 batch * pre_fc_size 64 * 128
 
         memory_pre_ext = memory_pre.unsqueeze(0).repeat(batch_size, 1,
-                                                        1)  # 在最外一维复制batch倍 batch*nouns_size*pre_fc 64*7668*512
-        att_pre_ext = att_pre.unsqueeze(0).repeat(self.nouns_size, 1, 1)  # 同理 nouns_size * batch * pre_fc 7668*64*512
-        att_pre_ext = torch.transpose(att_pre_ext, 0, 1)  # 转置一下注意力矩阵 batch*nouns_size*pre_fc 64*7668*512
-        # print(memory_pre_ext.size())
-        # print(att_pre_ext.size())
-        relation_pairs = torch.cat((memory_pre_ext, att_pre_ext), 2).reshape(-1, 2 * self.relation_pre_fc_size)  # 拼接到一块 (batch*nouns_size) * (2*pre_fc) (64*7668) * (2 * 512)
+                                                        1)  # 在最外一维复制batch倍 batch*nouns_size*pre_fc 64*7668*128
+        att_pre_ext = att_pre.unsqueeze(0).repeat(self.nouns_size, 1, 1)  # 同理 nouns_size * batch * pre_fc 7668*64*128
+        att_pre_ext = torch.transpose(att_pre_ext, 0, 1)  # 转置一下注意力矩阵 batch*nouns_size*pre_fc 64*7668*128
 
-        relations_post = self.post_fc(relation_pairs) # 做一次非线性嵌入， (batch * nouns_size) * post_fc_size (64 * 7668) * 512
+        relation_pairs = torch.cat((memory_pre_ext, att_pre_ext), 2).view(-1, 2 * self.relation_pre_fc_size)  # 拼接到一块
+        # (batch*nouns_size) * (2*pre_fc) (64*7668) * (2 * 128)
+
+        relations_post = self.post_fc(relation_pairs) # 做一次非线性嵌入， (batch * nouns_size) * post_fc_size (64 * 7668) * 64
         relations = self.rel_fc(relations_post).view(-1, self.nouns_size) # 计算关系分数 (batch * nouns_size) * 1 -> batch * nouns_size (64 * 7688) * 1 -> 64 * 7668
         return relations
 

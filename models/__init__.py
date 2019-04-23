@@ -41,7 +41,7 @@ def setup(opts, stage_id):
         return model
     elif stage_id == 2 or stage_id == 3:
         # 如果是指明了stage，没有指明start from，就加载最佳模型
-        logging.warning("Skipping stages, Loading parameters from info-best.pkl")
+        logging.warning("Loading parameters from info-best.pkl")
         assert os.path.isdir(opts.train_directory), "%s must be a directory" % opts.train_directory
         assert os.path.isfile(os.path.join(opts.train_directory, "info_" + opts.train_id + "-best.pkl")),\
             "no info-best.pkl in the directory"

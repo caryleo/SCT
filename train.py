@@ -379,6 +379,7 @@ def train(opts, device):
 
         # 将train划分重置
         loader.reset_iterator("train")
+        logging.warning("Changing batch size to %d" % opts.batch_size_3)
 
         # 在BaseModel里面，所然训练过程中使用了关系模块，但是语言模型部分是关闭的
         for param in model.parameters():
@@ -478,7 +479,7 @@ def train(opts, device):
                 ss_prob_history[iteration] = model.ss_prob
 
             # make evaluation on validation set, and save model 这里是eval的部分，保存模型的位置！！！
-            if iteration % opts.save_checkpoint_every == 0:
+            if iteration % opts.save_checkpoint_every_3 == 0:
                 info['iter'] = iteration
                 info['epoch'] = epoch
                 info['iterators'] = loader.iterators

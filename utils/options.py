@@ -111,6 +111,11 @@ def parse_arg():
                         type=int,
                         help="size of one mini-batch")
 
+    parser.add_argument('-batch3', '--batch_size_3',
+                        type=int,
+                        default= 16,
+                        help="size of one mini-batch for stage 3")
+
     parser.add_argument('-capsperimg', "--captions_per_image",
                         default=5,
                         type=int,
@@ -206,12 +211,12 @@ def parse_arg():
 
     parser.add_argument('-prefcsize', '--relation_pre_fc_size',
                         type=int,
-                        default=512,
+                        default=64,
                         help='size of pre_fc in relation module')
 
     parser.add_argument('-postfcsize', '--relation_post_fc_size',
                         type=int,
-                        default=512,
+                        default=32,
                         help='size of post_fc in relation module')
 
     # optimization
@@ -321,6 +326,11 @@ def parse_arg():
                         type=int,
                         default=500,
                         help='how often to save a model checkpoint (in iterations)')
+
+    parser.add_argument('-savechkpteve3', '--save_checkpoint_every_3',
+                        type=int,
+                        default=3500,
+                        help='how often to save a model checkpoint (in iterations) for stage 3')
 
     # evaluation
     parser.add_argument('-modpth', '--model_path',

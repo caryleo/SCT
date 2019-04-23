@@ -199,6 +199,9 @@ class DataLoader(data.Dataset):
 
         return data_all
 
+    def set_batch_3(self):
+        self.batch_size = self.batch_size_3
+
     # It's not coherent to make DataLoader a subclass of Dataset,
     # but essentially, we only need to implement the following to functions,
     # so that the torch.utils.data.DataLoader can load the data according

@@ -54,7 +54,7 @@ def eval_split(model, crit, loader, eval_kwargs={}):
     lang_eval = eval_kwargs.get('language_eval', 0)
     dataset = eval_kwargs.get('dataset', 'coco')
     beam_size = eval_kwargs.get('beam_size', 1)
-    device = eval_kwargs.get('device', torch.device("cuda:" + eval_kwargs.get('cuda_device', "0")))
+    device = eval_kwargs.get('device', torch.device("cuda:" + str(eval_kwargs.get('cuda_device', 0))))
     logging.info("Evaluating by device: %s", device)
     stage_id = eval_kwargs.get('stage', 0)
 
