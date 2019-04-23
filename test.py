@@ -1,13 +1,15 @@
-def a():
-    dic = dict()
-    dic["ssss"] = 4156
-    b(dic)
-    dic["ss"] = 22
-    print(dic)
+import argparse
+import os
+import torch
 
+parser = argparse.ArgumentParser()
 
-def b(dic):
-    dic["wwww"] = 415
-    print(dic)
+parser.add_argument('-t', type=str)
 
-a()
+opts = parser.parse_args()
+
+print(vars(opts))
+
+os.environ['CUDA_VISIBLE_DEVICES'] = opts.t
+a = torch.Tensor(10, 5).random_() % 10
+a = a.cuda()
