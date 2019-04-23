@@ -140,10 +140,10 @@ class BaseModel(nn.Module):
                 # print(rel_others.size())
                 rel = torch.cat((rel_zero, rel_res, rel_others), 1)
                 output = self.fuse_coefficient * LMvocab + (1 - self.fuse_coefficient) * rel
+                rel_res = F.softmax(rel_res, 1)
 
             output = F.log_softmax(output, 1)  # 出来的结果做一下log和softmax，这一已经映射到了词汇表 batch * (vocab + 1)
             outputs.append(output) # length (batch * (vocab+1))
-            rel_res = F.softmax(rel_res, 1)
             rel_ress.append(rel_res)
         if stage_id == 1 or stage_id == 2:
             return torch.cat([_.unsqueeze(1) for _ in outputs], 1), None
