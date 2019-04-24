@@ -6,6 +6,7 @@ DESCRIPTION:    the program core
 import json
 import logging
 import torch
+import os
 
 from tool import preprocess
 from utils import options
@@ -39,19 +40,21 @@ if __name__ == "__main__":
     logging.debug("Options input: \n" + json.dumps(para, indent=2))
 
     # cuda device
-    device = torch.device("cuda:" + str(opts.cuda_device))
-    logging.info("Device Using: %s " % device.__str__())
+    assert opts.cuda_device != '', "NO CUDA DEVICE SPECIFIED"
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = opts.cuda_device
+    logging.info("Device Using: %s" % opts.cuda_device)
 
     # check mode
     if opts.mode == 'train':
         logging.info("Current core mode: Training")
-        train.train(opts, device)
+        train.train(opts)
     elif opts.mode == 'eval':
         logging.info("Current core mode: Evaluating")
-        eval.evaluation(opts, device)
+        eval.evaluation(opts)
     elif opts.mode == 'precaps':
         logging.info("Current core mode: Preprocessing captions")
         preprocess.preprocess_captions(opts)
     elif opts.mode == 'prefeats':
         logging.info("Current core mode: Preprocessing features")
-        preprocess.preprocess_features(opts, device)
+        preprocess.preprocess_features(opts)

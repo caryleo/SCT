@@ -54,7 +54,7 @@ def eval_split(model, crit, loader, eval_kwargs={}):
     lang_eval = eval_kwargs.get('language_eval', 0)
     dataset = eval_kwargs.get('dataset', 'coco')
     beam_size = eval_kwargs.get('beam_size', 1)
-    device = eval_kwargs.get('device', torch.device("cuda:" + str(eval_kwargs.get('cuda_device', 0))))
+    device = eval_kwargs.get('cuda_device', -1)
     logging.info("Evaluating by device: %s", device)
     stage_id = eval_kwargs.get('stage', 0)
 
@@ -76,7 +76,7 @@ def eval_split(model, crit, loader, eval_kwargs={}):
             # forward the model to get loss 这一部分直接出loss
             tmp = [data['fc_feats'], data['att_feats'], data['captions'], data['masks']]
             with torch.no_grad():
-                tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
+                tmp = [torch.from_numpy(_).cuda() for _ in tmp]
                 fc_feats, att_feats, labels, masks = tmp
                 outputs, rel_ress = model(fc_feats, att_feats, labels, stage_id)
                 if stage_id == 1 or stage_id == 2: #
@@ -94,10 +94,10 @@ def eval_split(model, crit, loader, eval_kwargs={}):
         tmp = [data['fc_feats'][np.arange(loader.batch_size) * loader.captions_per_image],
                data['att_feats'][np.arange(loader.batch_size) * loader.captions_per_image]]
         with torch.no_grad():
-            tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
+            tmp = [torch.from_numpy(_).cuda() for _ in tmp]
             fc_feats, att_feats = tmp
             # forward the model to also get generated samples for each image 取样评估整体性能
-            seq, _, _ = model.sample(fc_feats, att_feats, stage_id, eval_kwargs)
+            seq, _, _ = model.module.sample(fc_feats, att_feats, stage_id, eval_kwargs)
 
         seq = seq.to("cpu").numpy()
 

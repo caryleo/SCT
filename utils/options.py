@@ -23,8 +23,8 @@ def parse_arg():
 
     # cuda device
     parser.add_argument('-cuda', "--cuda_device",
-                        type=int,
-                        default=0,
+                        type=str,
+                        default='',
                         help="The cuda device")
 
     # preprocess captions

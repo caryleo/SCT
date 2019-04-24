@@ -9,6 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+import logging
+
 
 class BaseModel(nn.Module):
     def __init__(self, opts):
@@ -112,9 +114,9 @@ class BaseModel(nn.Module):
                 wordt = captions[:, i].clone()
                 # break if all the sequences end
             # print(captions.size())
-            if i >= 1 and captions[:, i].data.sum() == 0:
-                # 如果所有的caption这个时候都是0了，就结束了
-                break
+            # if i >= 1 and captions[:, i].data.sum() == 0:
+            #     # 如果所有的caption这个时候都是0了，就结束了
+            #     break
 
             xt = self.word_embed(wordt)  # 将单词编码，batch * encoding，64*9487 - 64*512
 
@@ -146,7 +148,9 @@ class BaseModel(nn.Module):
             outputs.append(output) # length (batch * (vocab+1))
             rel_ress.append(rel_res)
         if stage_id == 1 or stage_id == 2:
-            return torch.cat([_.unsqueeze(1) for _ in outputs], 1), None
+            ret = torch.cat([_.unsqueeze(1) for _ in outputs], 1)
+            logging.debug("Output shape: %s" % ret.shape.__str__())
+            return ret, None
         else:
             return torch.cat([_.unsqueeze(1) for _ in outputs], 1), torch.cat([_.unsqueeze(1) for _ in rel_ress], 1) # batch * length * (vocab + 1), batch * length * nouns
 
@@ -231,11 +235,11 @@ class BaseModel(nn.Module):
                 it = it.view(-1).long()
             else:  # 依照概率取样
                 if temperature == 1.0:
-                    prob_prev = torch.exp(logprobs.data).to("cpu")  # fetch prev distribution: shape Nx(M+1)
+                    prob_prev = torch.exp(logprobs.data).cpu()  # fetch prev distribution: shape Nx(M+1)
                 else:
                     # scale logprobs by temperature
-                    prob_prev = torch.exp(torch.div(logprobs.data, temperature)).to(torch.device("cpu"))
-                it = torch.multinomial(prob_prev, 1).to(self.opts.device)
+                    prob_prev = torch.exp(torch.div(logprobs.data, temperature)).cpu()
+                it = torch.multinomial(prob_prev, 1).cuda()
                 sampleLogprobs = logprobs.gather(1, it)  # gather the logprobs at sampled positions
                 it = it.view(-1).long()  # and flatten indices for downstream processing
             # 作为下一个时间点的输入
@@ -447,7 +451,7 @@ class BaseCore(nn.Module):
         return output, state, rel_res
 
     def memory_ready(self):
-        memory = torch.from_numpy(self.memory.get_memory()).to(self.opts.device, torch.float)
+        memory = torch.from_numpy(self.memory.get_memory()).cuda().float()
         self.relation.set_memory(memory)
 
     def memory_finish(self):
@@ -516,7 +520,7 @@ class BaseRelation(nn.Module):
 
     def forward(self, att_res, stage_id):
         batch_size = att_res.size(0)  # batch
-        memory_pre = self.pre_fc(self.nouns_memory)  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 128
+        memory_pre = self.pre_fc(self.nouns_memory.cuda())  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 128
         att_pre = self.pre_fc(att_res)  # 处理输入的注意力表示 batch * pre_fc_size 64 * 128
 
         memory_pre_ext = memory_pre.unsqueeze(0).repeat(batch_size, 1,
@@ -533,7 +537,7 @@ class BaseRelation(nn.Module):
 
     def set_memory(self, memory):
         self.nouns_memory = memory[1:, :]
-        self.nouns_memory.to(self.opts.device)
+        self.nouns_memory.cuda()
 
 
 class BaseMemory(nn.Module):
@@ -553,8 +557,8 @@ class BaseMemory(nn.Module):
         is_nouns = wordt.le(self.nouns_size).type_as(wordt) # batch * 1
         xt_nouns = (wordt * is_nouns)
 
-        nouns = xt_nouns.to(torch.device("cpu")).numpy()
-        att_ress = att_res.to(torch.device("cpu")).numpy()
+        nouns = xt_nouns.cpu().numpy()
+        att_ress = att_res.cpu().numpy()
 
         for i in range(batch_size):
             self.nouns_memory[nouns[i]] = self.nouns_memory[nouns[i]] + att_ress[i]

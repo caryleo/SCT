@@ -19,7 +19,7 @@ import utils.misc as utils
 import torch
 
 
-def evaluation(opts, device):
+def evaluation(opts):
     # Load infos
     logging.info("Path to info: %s" % opts.info_path)
     logging.info("Path to model: %s" % opts.model_path)
@@ -61,13 +61,13 @@ def evaluation(opts, device):
     # Setup the model
     model = models.setup(opts)
     model.load_state_dict(torch.load(opts.model_path))
-    model.to(device=device)
+    model.cuda()
     for parameter in model.parameters():
-        parameter.to(device=device)
+        parameter.cuda()
 
     model.eval()
     criterion = utils.loss.LanguageModelCriterion()
-    criterion.to(device=device)
+    criterion.cuda()
 
     # Create the Data Loader instance
     if len(opts.image_folder) == 0:

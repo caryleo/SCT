@@ -13,9 +13,8 @@ class my_resnet(nn.Module):
         self.resnet = resnet
 
     def forward(self, img, att_size=14):
-        x = img.unsqueeze(0)
-
-        x = self.resnet.conv1(x)
+        # x = img.unsqueeze(0)
+        x = self.resnet.conv1(img)
         x = self.resnet.bn1(x)
         x = self.resnet.relu(x)
         x = self.resnet.maxpool(x)

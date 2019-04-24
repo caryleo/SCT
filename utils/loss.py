@@ -47,12 +47,12 @@ class RelationClassificationCriterion(nn.Module):
         rel_ress = to_contiguous(rel_ress).view(-1, self.nouns_size) # (batch * length) * nouns
         targets = to_contiguous(targets).view(-1, 1) # (batch * length) * 1
         mask = to_contiguous(mask).view(-1, 1) # (batch * length) * 1
-        rel_zero = torch.zeros(rel_ress.size(0), 1).to(self.opts.device)
+        rel_zero = torch.zeros(rel_ress.size(0), 1).cuda()
         rel = torch.cat((rel_zero, rel_ress), 1)
 
-        targets_nouns_mask = targets.le(self.nouns_size).float().to(self.opts.device) # 判断那些是名词 (batch * length) * 1
+        targets_nouns_mask = targets.le(self.nouns_size).float().cuda() # 判断那些是名词 (batch * length) * 1
         targets = targets.float() * targets_nouns_mask
-        targets_onehot = torch.zeros(rel.shape[0], rel.shape[1]).to(self.opts.device)
+        targets_onehot = torch.zeros(rel.shape[0], rel.shape[1]).cuda()
 
         # print(rel_ress.size())
         # print(targets.size())

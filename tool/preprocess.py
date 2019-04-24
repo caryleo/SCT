@@ -11,6 +11,7 @@ import os
 from PIL import Image
 import skimage.io
 import torch
+import torch.nn as nn
 from torchvision import transforms
 import nltk
 
@@ -265,7 +266,7 @@ def preprocess_captions(opts):
     logging.info("Preprocess for captions complete")
 
 
-def preprocess_features(opts, device):
+def preprocess_features(opts):
     # load file path
     path_to_input_json = opts.input_caption_json
     directory_of_output = opts.output_feature_directory
@@ -300,8 +301,8 @@ def preprocess_features(opts, device):
     model.load_state_dict(torch.load(os.path.join(path_to_models, model_name + ".pth")))
     logging.debug("Current Model: \n" + model.__str__())
 
-    feature_net = netcore.my_resnet(model)
-    feature_net.to(device=device)
+    feature_net = nn.DataParallel(netcore.my_resnet(model))
+    feature_net.cuda()
     feature_net.eval()
     logging.info("Load pretrained resnet model complete")
 
@@ -323,11 +324,12 @@ def preprocess_features(opts, device):
             input_image = np.concatenate((input_image, input_image, input_image), axis=2)
 
         input_image = input_image.astype('float32') / 255.0
-        input_img = torch.from_numpy(input_image.transpose([2, 0, 1])).to(device=device)
-        input_img = normalize(input_img).to(device=device)
+        input_img = torch.from_numpy(input_image.transpose([2, 0, 1])).cuda()
+        input_img = normalize(input_img).cuda()
 
         # extract features
         with torch.no_grad():
+            input_img = input_img.unsqueeze(0)
             feat_fc, feat_att = feature_net(input_img, attention_size)
             logging.debug("%s %s" % (feat_fc.shape, feat_att.shape))
 

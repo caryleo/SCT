@@ -3,6 +3,8 @@ FILENAME:       TRAIN
 DESCRIPTION:    the train core
 """
 
+from parallel import DataParallelModel, DataParallelCriterion
+
 import logging
 import os
 import time
@@ -10,6 +12,7 @@ import time
 import h5py
 from six.moves import cPickle
 import torch
+import torch.nn as nn
 import torch.optim as optim
 
 import utils.loss as Loss
@@ -30,9 +33,7 @@ def add_summary_value(writer, key, value, iteration):
     writer.add_summary(summary, iteration)
 
 
-def train(opts, device):
-    opts.device = device
-
+def train(opts):
     # load data
     logging.info("STAGE 0: Loading data")
     logging.info("Loading data")
@@ -109,8 +110,9 @@ def train(opts, device):
     if opts.train_mode <= 1:
         # 加载制定的模型
         logging.info("Using model: %s" % opts.caption_model)
-        model = models.setup(opts, 1)  # 模型的加载在模型部分完成了
-        model.to(device=device)
+        model = models.setup(opts, 1)
+        model = nn.DataParallel(model) # 模型的加载在模型部分完成了
+        model.cuda()
 
         # 是否更新学习率
         update_lr_flag = True
@@ -147,7 +149,7 @@ def train(opts, device):
                 if epoch > opts.scheduled_sampling_start >= 0:
                     frac = (epoch - opts.scheduled_sampling_start) // opts.scheduled_sampling_increase_every
                     opts.ss_prob = min(opts.scheduled_sampling_increase_prob * frac, opts.scheduled_sampling_max_prob)
-                    model.ss_prob = opts.ss_prob7
+                    model.module.ss_prob = opts.ss_prob
                 update_lr_flag = False
 
             start_time = time.time()
@@ -161,7 +163,7 @@ def train(opts, device):
 
             # 取出 fc att cap mask四项，这个时候已经对齐了，不用管太多
             tmp = [data['fc_feats'], data['att_feats'], data['captions'], data['masks']]
-            tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
+            tmp = [torch.from_numpy(_).cuda() for _ in tmp]
             fc_feats, att_feats, captions, masks = tmp
 
             logging.debug("FC Features shape: %s", fc_feats.shape.__str__())
@@ -190,7 +192,7 @@ def train(opts, device):
                                                                                       epoch,
                                                                                       train_loss,
                                                                                       end_time - start_time))
-            if iteration % 500 == 0:
+            if iteration % 100 == 0:
                 # print("test")
                 logging.info(
                     "iter {} - epoch {}, train_loss = {:.3f}".format(iteration,
@@ -209,12 +211,12 @@ def train(opts, device):
                 if tf is not None:
                     add_summary_value(tf_summary_writer, 'train_loss', train_loss, iteration)
                     add_summary_value(tf_summary_writer, 'learning_rate', opts.current_lr, iteration)
-                    add_summary_value(tf_summary_writer, 'scheduled_sampling_prob', model.ss_prob, iteration)
+                    add_summary_value(tf_summary_writer, 'scheduled_sampling_prob', model.module.ss_prob, iteration)
                     tf_summary_writer.flush()
                 # 写入历史文件
                 loss_history[iteration] = train_loss
                 lr_history[iteration] = opts.current_lr
-                ss_prob_history[iteration] = model.ss_prob
+                ss_prob_history[iteration] = model.module.ss_prob
 
             # make evaluation on validation set, and save model 这里是eval的部分，保存模型的位置！！！
             if iteration % opts.save_checkpoint_every == 0:
@@ -225,8 +227,8 @@ def train(opts, device):
 
                 history['loss_history'] = loss_history
                 history['lr_history'] = lr_history
-                history['ss_prob_history'] = ss_prob_history
-                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
+                # history['ss_prob_history'] = ss_prob_history
+                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history,
                                                   val_result_history, iteration, best_val_score, 1)
                 # Write validation result into summary
                 if tf is not None:
@@ -245,8 +247,8 @@ def train(opts, device):
 
                 history['loss_history'] = loss_history
                 history['lr_history'] = lr_history
-                history['ss_prob_history'] = ss_prob_history
-                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
+                # history['ss_prob_history'] = ss_prob_history
+                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history,
                                                   val_result_history, iteration, best_val_score, 1)
                 # Write validation result into summary
                 if tf is not None:
@@ -259,23 +261,23 @@ def train(opts, device):
         logging.info("Training complete")
 
     if opts.train_mode <= 2:
-
+        logging.info("STAGE 2: Extracting memory")
+        logging.warning("NOTE: This stage mustn't be interrupted!!!")
         # 加载制定的模型
         logging.info("Using model: %s" % opts.caption_model)
         del model
-        model = models.setup(opts, 2)  # 模型的加载在模型部分完成了
-        model.to(device=device)
+        model = models.setup(opts, 2)
+        model = nn.DataParallel(model)  # 模型的加载在模型部分完成了
+        model.cuda()
         # Assure in training mode
         model.eval()
 
-        logging.info("STAGE 2: Extracting memory")
-        logging.warning("NOTE: This stage mustn't be interrupted!!!")
         logging.info("Start training")
         # 注意，第二阶段不需要任何形式上的优化，因为手欠，还是加上吧
         criterion = Loss.LanguageModelCriterion()
         # 将train划分重置
         loader.reset_iterator("train")
-        model.eval()  # 切换到eval模式
+
         for param in model.parameters():
             if param is not None:
                 param.requires_grad = False
@@ -293,7 +295,7 @@ def train(opts, device):
 
             # 取出 fc att cap mask四项，这个时候已经对齐了，不用管太多
             tmp = [data['fc_feats'], data['att_feats'], data['captions'], data['masks']]
-            tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
+            tmp = [torch.from_numpy(_).cuda() for _ in tmp]
             fc_feats, att_feats, captions, masks = tmp
 
             # start from 1, 0 as START token没， 这里在算loss的时候做了一个特殊操作，就是把BOS去掉了
@@ -309,7 +311,7 @@ def train(opts, device):
                                                                                 epoch,
                                                                                 train_loss,
                                                                                 end_time - start_time))
-            if iteration % 500 == 0:
+            if iteration % 100 == 0:
                 logging.info(
                     "iter {} - epoch {}, train_loss = {:.3f}".format(iteration,
                                                                      epoch,
@@ -321,7 +323,7 @@ def train(opts, device):
                 # 1个epoch即结束
                 break
         # 准备处理记忆
-        memory = model.memory_finish()
+        memory = model.module.memory_finish()
 
         logging.info("Writing memory")
         directory_memory = opts.output_memory_directory
@@ -341,17 +343,28 @@ def train(opts, device):
         logging.info("Training complete")
 
     if opts.train_mode <= 3:
+        logging.info("STAGE 3: Training relation model")
+
         del model
         # 加载制定的模型
         logging.info("Using model: %s" % opts.caption_model)
-        model = models.setup(opts, 3)  # 模型的加载在模型部分完成了
-        model.to(device=device)
+        model = models.setup(opts, 3)
+
+        model = nn.DataParallel(model)  # 模型的加载在模型部分完成了
+        model.cuda()
+
+        # model = DataParallelModel(model)
+        # model.cuda()
 
         # 是否更新学习率
         update_lr_flag = True
 
         # Assure in training mode
         model.train()
+
+        # 第三个阶段需要计算损失，且是混合损失
+        criterion = Loss.FusionCriterion(opts)
+        # criterion = DataParallelCriterion(criterion)
 
         # Adam优化
         optimizer = optim.Adam(model.parameters(), lr=opts.learning_rate, weight_decay=opts.weight_decay)
@@ -368,28 +381,27 @@ def train(opts, device):
             memory = memory_h5['memory'][:, :]
             # print(memory)
             # print(type(memory))
-            model.set_memory(memory)
-        logging.info("STAGE 3: Training relation model")
-        logging.info("Start training")
-        model.memory_ready()
-        model.to(device)
+            model.module.set_memory(memory)
 
-        # 第三个阶段需要计算损失，且是混合损失
-        criterion = Loss.FusionCriterion(opts)
+        logging.info("Start training")
+        model.module.memory_ready()
+
+
 
         # 将train划分重置
         loader.reset_iterator("train")
         logging.warning("Changing batch size to %d" % opts.batch_size_3)
+        loader.set_batch_3()
 
         # 在BaseModel里面，所然训练过程中使用了关系模块，但是语言模型部分是关闭的
         for param in model.parameters():
             if param is not None:
                 param.requires_grad = False
         # 保留梯度训练部分只有关系模块和最后的输出部分，包括语言模型的反映射部分
-        for param in model.core.relation.parameters():
+        for param in model.module.core.relation.parameters():
             if param is not None:
                 param.requires_grad = True
-        for param in model.logit.parameters():
+        for param in model.module.logit.parameters():
             if param is not None:
                 param.requires_grad = True
 
@@ -410,7 +422,7 @@ def train(opts, device):
                 if epoch > opts.scheduled_sampling_start >= 0:
                     frac = (epoch - opts.scheduled_sampling_start) // opts.scheduled_sampling_increase_every
                     opts.ss_prob = min(opts.scheduled_sampling_increase_prob * frac, opts.scheduled_sampling_max_prob)
-                    model.ss_prob = opts.ss_prob7
+                    model.module.ss_prob = opts.ss_prob7
                 update_lr_flag = False
 
             start_time = time.time()
@@ -424,7 +436,7 @@ def train(opts, device):
 
             # 取出 fc att cap mask四项，这个时候已经对齐了，不用管太多
             tmp = [data['fc_feats'], data['att_feats'], data['captions'], data['masks']]
-            tmp = [torch.from_numpy(_).to(device=device) for _ in tmp]
+            tmp = [torch.from_numpy(_).cuda() for _ in tmp]
             fc_feats, att_feats, captions, masks = tmp
 
             logging.debug("FC Features shape: %s", fc_feats.shape.__str__())
@@ -453,7 +465,7 @@ def train(opts, device):
                                                                                       epoch,
                                                                                       train_loss,
                                                                                       end_time - start_time))
-            if iteration % 500 == 0:
+            if iteration % 100 == 0:
                 logging.info(
                     "iter {} - epoch {}, train_loss = {:.3f}".format(iteration,
                                                                      epoch,
@@ -471,12 +483,12 @@ def train(opts, device):
                 if tf is not None:
                     add_summary_value(tf_summary_writer, 'train_loss', train_loss, iteration)
                     add_summary_value(tf_summary_writer, 'learning_rate', opts.current_lr, iteration)
-                    add_summary_value(tf_summary_writer, 'scheduled_sampling_prob', model.ss_prob, iteration)
+                    add_summary_value(tf_summary_writer, 'scheduled_sampling_prob', model.module.ss_prob, iteration)
                     tf_summary_writer.flush()
                 # 写入历史文件
                 loss_history[iteration] = train_loss
                 lr_history[iteration] = opts.current_lr
-                ss_prob_history[iteration] = model.ss_prob
+                ss_prob_history[iteration] = model.module.ss_prob
 
             # make evaluation on validation set, and save model 这里是eval的部分，保存模型的位置！！！
             if iteration % opts.save_checkpoint_every_3 == 0:
@@ -488,7 +500,7 @@ def train(opts, device):
                 history['loss_history'] = loss_history
                 history['lr_history'] = lr_history
                 history['ss_prob_history'] = ss_prob_history
-                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
+                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history,
                                                   val_result_history, iteration, best_val_score, 3)
                 # Write validation result into summary
                 if tf is not None:
@@ -508,7 +520,7 @@ def train(opts, device):
                 history['loss_history'] = loss_history
                 history['lr_history'] = lr_history
                 history['ss_prob_history'] = ss_prob_history
-                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history, device,
+                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history,
                                                   val_result_history, iteration, best_val_score, 3)
                 # Write validation result into summary
                 if tf is not None:
@@ -522,13 +534,12 @@ def train(opts, device):
 
 
 
-def validation(opts, model, criterion, optimizer, loader, info, history, device, val_result_history, iteration,
-               best_val_score, stage_id):
+def validation(opts, model, criterion, optimizer, loader, info, history, val_result_history, iteration, best_val_score,
+               stage_id):
     logging.info("Start validation")
     # eval model
     eval_kwargs = {'split': 'val',
                    'dataset': opts.input_json,
-                   'device': device,
                    'stage': stage_id}
     eval_kwargs.update(vars(opts))
 
@@ -549,7 +560,7 @@ def validation(opts, model, criterion, optimizer, loader, info, history, device,
 
     # 写入检查点
     checkpoint_path = os.path.join(opts.checkpoint_path, 'model.pth')
-    torch.save(model.state_dict(), checkpoint_path)
+    torch.save(model.module.state_dict(), checkpoint_path)
     logging.info("model saved to {}".format(checkpoint_path))
     optimizer_path = os.path.join(opts.checkpoint_path, 'optimizer.pth')
     torch.save(optimizer.state_dict(), optimizer_path)
@@ -572,7 +583,7 @@ def validation(opts, model, criterion, optimizer, loader, info, history, device,
     # 选择的最佳模型
     if best_flag:
         checkpoint_path = os.path.join(opts.checkpoint_path, 'model-best.pth')
-        torch.save(model.state_dict(), checkpoint_path)
+        torch.save(model.module.state_dict(), checkpoint_path)
         logging.info("model saved to {}".format(checkpoint_path))
         with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '-best.pkl'), 'wb') as bestfile:
             cPickle.dump(info, bestfile)
