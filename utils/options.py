@@ -52,6 +52,11 @@ def parse_arg():
                         default="",
                         help="root directory of images")
 
+    parser.add_argument('-rareth', '--rare_threshold',
+                        type=int,
+                        default=100,
+                        help='frequency threshold for rare nouns')
+
     # preprocess images, including image_root and input_caption_json
     parser.add_argument('-outfeatdir', "--output_feature_directory",
                         default='data/features',

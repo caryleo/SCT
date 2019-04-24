@@ -48,8 +48,10 @@ def preprocess_captions(opts):
     # load word threshold and maximal sentence length
     word_threshold = opts.word_threshold
     max_sentence_length = opts.max_sentence_length
+    rare_noun_threshold = opts.rare_threshold
     logging.info("Word occurrences threshold: %d" % word_threshold)
     logging.info("Maximal sentence length: %d" % max_sentence_length)
+    logging.info("Rare noun threshold: %d" % rare_noun_threshold)
 
     # count word occurrences, noun occurrences and sentence length
     logging.info("Counting occurrences of words and nouns")
@@ -90,12 +92,17 @@ def preprocess_captions(opts):
     noun_sum = sum(noun_occurrences.values())
     nouns = list()  # all legal nouns
     rares = list()  # all illegal words
+    rare_nouns = list()
+    rare_noun_sum = 0
     for word, times in word_occurrences.items():
         if times <= word_threshold:
             rares.append(word)
         else:
             if word in noun_occurrences.keys():
                 nouns.append(word)
+                if noun_occurrences.get(word) < rare_noun_threshold:
+                    rare_nouns.append(word)
+                    rare_noun_sum += noun_occurrences.get(word)
             vocabulary.append(word)
 
     rare_sum = sum(word_occurrences[rare] for rare in rares)
@@ -105,6 +112,10 @@ def preprocess_captions(opts):
                  (len(nouns), len(word_occurrences), len(nouns) * 100.0 / len(word_occurrences)))
     logging.info("Number of nouns: %d / %d (%.2f%%)" %
                  (noun_sum, word_sum, noun_sum * 100.0 / word_sum))
+    logging.info("Size of rare nouns: %d / %d (%.2f%%)" %
+                 (len(rare_nouns), len(word_occurrences), len(rare_nouns) * 100.0 / len(word_occurrences)))
+    logging.info("Number of nouns: %d / %d (%.2f%%)" %
+                 (rare_noun_sum, word_sum, rare_noun_sum * 100.0 / word_sum))
     logging.info("Size of rares: %d / %d (%.2f%%)" %
                  (len(rares), len(word_occurrences), len(rares) * 100.0 / len(word_occurrences)))
     logging.info("Number of rares, or UNK replacements: %d / %d (%.2f%%)" %
@@ -186,7 +197,7 @@ def preprocess_captions(opts):
                 if pos < max_sentence_length:
                     if word not in rares:
                         captions_per_image[tag, pos] = dict_word_to_index[word]
-                        if word in nouns:
+                        if word in rare_nouns:
                             # for every noun, store the caption index and position (noun index to caption index & pos)
                             dict_nouns[dict_word_to_index[word]] = dict_nouns.get(dict_word_to_index[word], [])
                             dict_nouns[dict_word_to_index[word]].append((caption_per_image_start + tag, pos))
