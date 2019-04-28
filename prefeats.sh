@@ -5,4 +5,4 @@ python sct.py \
 -imgrt data/images \
 -attsize 14 \
 -incapjson data/dataset_coco.json\
--outfeatdir data/features_30k \
+-outfeatdir data/features_14 \
