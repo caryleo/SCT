@@ -433,7 +433,10 @@ class BaseCore(nn.Module):
             in_transform.narrow(1, self.rnn_size, self.rnn_size))  # maxout
 
         next_c = forget_gate * state[1][-1] + in_gate * in_transform  # c batch*rnn_size 64*512
-        next_h = out_gate * torch.tanh(next_c)  # h batch * rnn_size 64 * 512
+
+        # next_h = out_gate * torch.tanh(next_c)  # h batch * rnn_size 64 * 512
+        next_h = out_gate * torch.sigmoid(next_c)
+
         output = self.dropout(next_h)  # 对输出，做一个dropout
 
         if stage_id == 1:

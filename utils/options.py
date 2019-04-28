@@ -201,7 +201,7 @@ def parse_arg():
 
     parser.add_argument('-fusecoef', '--fuse_coefficient',
                         type=float,
-                        default=0.75,
+                        default=0.50,
                         help='fuse coeficient for output')
 
     parser.add_argument('-memosize', '--memory_size',
@@ -331,6 +331,16 @@ def parse_arg():
                         type=int,
                         default=3500,
                         help='how often to save a model checkpoint (in iterations) for stage 3')
+
+    parser.add_argument('-best1', '--best_models_1',
+                        type=str,
+                        default='data/best1',
+                        help='best models of stage 1')
+
+    parser.add_argument('-best3', '--best_models_3',
+                        type=str,
+                        default='data/best3',
+                        help='best models of stage 3')
 
     # evaluation
     parser.add_argument('-modpth', '--model_path',

@@ -68,9 +68,9 @@ def train(opts):
         if os.path.isfile(os.path.join(opts.start_from, 'history_' + opts.train_id + '.pkl')):
             with open(os.path.join(opts.start_from, 'history_' + opts.train_id + '.pkl'), 'rb') as history_file:
                 history = cPickle.load(history_file)
-
-        logging.info("Load checkpoint complete")
         opts.train_mode = info['stage']
+        logging.info("Load checkpoint complete")
+
 
     # load iter and epoch from info_file
     iteration = info.get('iter', 0)
@@ -285,6 +285,13 @@ def train(opts):
                               'wb') as bestfile:
                         cPickle.dump(info, bestfile)
 
+                    best1 = os.path.join(opts.best_models_1, 'model_' + opts.train_id + '-best1.pth')
+                    torch.save(model.module.state_dict(), best1)
+                    logging.info("model saved to {}".format(best1))
+                    with open(os.path.join(opts.best_models_1, 'info_' + opts.train_id + '-best.pkl'),
+                              'wb') as bestfile:
+                        cPickle.dump(info, bestfile)
+
                 logging.info("validation complete")
                 # Write validation result into summary
                 if tf is not None:
@@ -354,6 +361,13 @@ def train(opts):
                     torch.save(model.module.state_dict(), checkpoint_path)
                     logging.info("model saved to {}".format(checkpoint_path))
                     with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '-best.pkl'),
+                              'wb') as bestfile:
+                        cPickle.dump(info, bestfile)
+
+                    best1 = os.path.join(opts.best_models_1, 'model_' + opts.train_id + '-best1.pth')
+                    torch.save(model.module.state_dict(), best1)
+                    logging.info("model saved to {}".format(best1))
+                    with open(os.path.join(opts.best_models_1, 'info_' + opts.train_id + '-best.pkl'),
                               'wb') as bestfile:
                         cPickle.dump(info, bestfile)
 
@@ -456,7 +470,7 @@ def train(opts):
         info['best_val_score'] = best_val_score
         info['opts'] = opts
         info['vocabulary'] = loader.get_vocab()
-        info['stage'] = 2
+        info['stage'] = 3 # if memory stage 2 is completed, just go to stage 3
         with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '.pkl'), 'wb') as infofile:
             cPickle.dump(info, infofile)
 
@@ -676,6 +690,13 @@ def train(opts):
                               'wb') as bestfile:
                         cPickle.dump(info, bestfile)
 
+                    best1 = os.path.join(opts.best_models_1, 'model_' + opts.train_id + '-best1.pth')
+                    torch.save(model.module.state_dict(), best1)
+                    logging.info("model saved to {}".format(best1))
+                    with open(os.path.join(opts.best_models_1, 'info_' + opts.train_id + '-best.pkl'),
+                              'wb') as bestfile:
+                        cPickle.dump(info, bestfile)
+
                 logging.info("validation complete")
                 # Write validation result into summary
                 if tf is not None:
@@ -745,6 +766,13 @@ def train(opts):
                     torch.save(model.module.state_dict(), checkpoint_path)
                     logging.info("model saved to {}".format(checkpoint_path))
                     with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '-best.pkl'),
+                              'wb') as bestfile:
+                        cPickle.dump(info, bestfile)
+
+                    best1 = os.path.join(opts.best_models_1, 'model_' + opts.train_id + '-best1.pth')
+                    torch.save(model.module.state_dict(), best1)
+                    logging.info("model saved to {}".format(best1))
+                    with open(os.path.join(opts.best_models_1, 'info_' + opts.train_id + '-best.pkl'),
                               'wb') as bestfile:
                         cPickle.dump(info, bestfile)
 
