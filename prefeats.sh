@@ -4,5 +4,5 @@ python sct.py \
 -cuda 0 \
 -imgrt data/images \
 -attsize 14 \
--incapjson data/dataset_coco.json\
+-incapjson data/dataset_coco.json \
 -outfeatdir data/features_14 \
