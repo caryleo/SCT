@@ -104,6 +104,8 @@ def train(opts):
     loader.split_index = info.get('split_index', loader.split_index)
     if opts.load_best_score == 1:
         best_val_score = info.get('best_val_score', None)
+    else:
+        best_val_score = None
 
     model = None
 
@@ -112,6 +114,7 @@ def train(opts):
         logging.info("Using model: %s" % opts.caption_model)
         model = models.setup(opts, 1)
         model = nn.DataParallel(model) # 模型的加载在模型部分完成了
+        # model = DataParallelModel(model)
         model.cuda()
 
         # 是否更新学习率
@@ -132,6 +135,7 @@ def train(opts):
         logging.info("Start training")
         # 第一阶段，语言模型正常训练，使用对数模型训练
         criterion = Loss.LanguageModelCriterion()
+        # criterion = DataParallelCriterion(criterion)
         while True:
             # update learning rate, including lr_decay and schedule_sample 这部分暂时跳过，有关学习率调整的，先放下
             if update_lr_flag:
@@ -228,8 +232,60 @@ def train(opts):
                 history['loss_history'] = loss_history
                 history['lr_history'] = lr_history
                 # history['ss_prob_history'] = ss_prob_history
-                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history,
-                                                  val_result_history, iteration, best_val_score, 1)
+                logging.info("Start validation")
+                # eval model
+                eval_kwargs = {'split': 'val',
+                               'dataset': opts.input_json,
+                               'stage': 1}
+                eval_kwargs.update(vars(opts))
+
+                val_loss, predictions, lang_stats = eval_utils.eval_split(model, criterion, loader, eval_kwargs)
+
+                val_result_history[iteration] = {'loss': val_loss, 'lang_stats': lang_stats, 'predictions': predictions}
+
+                # Save model if is improving on validation result 如果取language，就以CIDEr为准，否则是loss
+                if opts.language_eval == 1:
+                    current_score = lang_stats['CIDEr']
+                else:
+                    current_score = - val_loss
+
+                best_flag = False
+                if best_val_score is None or current_score > best_val_score:
+                    best_val_score = current_score
+                    best_flag = True
+
+                # 写入检查点
+                checkpoint_path = os.path.join(opts.checkpoint_path, 'model.pth')
+                torch.save(model.module.state_dict(), checkpoint_path)
+                logging.info("model saved to {}".format(checkpoint_path))
+                optimizer_path = os.path.join(opts.checkpoint_path, 'optimizer.pth')
+                torch.save(optimizer.state_dict(), optimizer_path)
+
+                # Dump miscellaneous information
+
+                info['best_val_score'] = best_val_score
+                info['opts'] = opts
+                info['vocabulary'] = loader.get_vocab()
+                info['stage'] = 1
+
+                history['val_result_history'] = val_result_history
+
+                with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '.pkl'), 'wb') as infofile:
+                    cPickle.dump(info, infofile)
+                with open(os.path.join(opts.checkpoint_path, 'history_' + opts.train_id + '.pkl'), 'wb') as historyfile:
+                    cPickle.dump(history, historyfile)
+                logging.info("Checkpoint Saved")
+
+                # 选择的最佳模型
+                if best_flag:
+                    checkpoint_path = os.path.join(opts.checkpoint_path, 'model-best.pth')
+                    torch.save(model.module.state_dict(), checkpoint_path)
+                    logging.info("model saved to {}".format(checkpoint_path))
+                    with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '-best.pkl'),
+                              'wb') as bestfile:
+                        cPickle.dump(info, bestfile)
+
+                logging.info("validation complete")
                 # Write validation result into summary
                 if tf is not None:
                     add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -248,8 +304,60 @@ def train(opts):
                 history['loss_history'] = loss_history
                 history['lr_history'] = lr_history
                 # history['ss_prob_history'] = ss_prob_history
-                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history,
-                                                  val_result_history, iteration, best_val_score, 1)
+                logging.info("Start validation")
+                # eval model
+                eval_kwargs = {'split': 'val',
+                               'dataset': opts.input_json,
+                               'stage': 1}
+                eval_kwargs.update(vars(opts))
+
+                val_loss, predictions, lang_stats = eval_utils.eval_split(model, criterion, loader, eval_kwargs)
+
+                val_result_history[iteration] = {'loss': val_loss, 'lang_stats': lang_stats, 'predictions': predictions}
+
+                # Save model if is improving on validation result 如果取language，就以CIDEr为准，否则是loss
+                if opts.language_eval == 1:
+                    current_score = lang_stats['CIDEr']
+                else:
+                    current_score = - val_loss
+
+                best_flag = False
+                if best_val_score is None or current_score > best_val_score:
+                    best_val_score = current_score
+                    best_flag = True
+
+                # 写入检查点
+                checkpoint_path = os.path.join(opts.checkpoint_path, 'model.pth')
+                torch.save(model.module.state_dict(), checkpoint_path)
+                logging.info("model saved to {}".format(checkpoint_path))
+                optimizer_path = os.path.join(opts.checkpoint_path, 'optimizer.pth')
+                torch.save(optimizer.state_dict(), optimizer_path)
+
+                # Dump miscellaneous information
+
+                info['best_val_score'] = best_val_score
+                info['opts'] = opts
+                info['vocabulary'] = loader.get_vocab()
+                info['stage'] = 1
+
+                history['val_result_history'] = val_result_history
+
+                with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '.pkl'), 'wb') as infofile:
+                    cPickle.dump(info, infofile)
+                with open(os.path.join(opts.checkpoint_path, 'history_' + opts.train_id + '.pkl'), 'wb') as historyfile:
+                    cPickle.dump(history, historyfile)
+                logging.info("Checkpoint Saved")
+
+                # 选择的最佳模型
+                if best_flag:
+                    checkpoint_path = os.path.join(opts.checkpoint_path, 'model-best.pth')
+                    torch.save(model.module.state_dict(), checkpoint_path)
+                    logging.info("model saved to {}".format(checkpoint_path))
+                    with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '-best.pkl'),
+                              'wb') as bestfile:
+                        cPickle.dump(info, bestfile)
+
+                logging.info("validation complete")
                 # Write validation result into summary
                 if tf is not None:
                     add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -259,6 +367,7 @@ def train(opts):
                 break
 
         logging.info("Training complete")
+        torch.cuda.empty_cache()
 
     if opts.train_mode <= 2:
         logging.info("STAGE 2: Extracting memory")
@@ -340,7 +449,19 @@ def train(opts):
         file_memory.close()
         logging.info("Write memory complete")
 
+        info['iter'] = iteration
+        info['epoch'] = epoch
+        info['iterators'] = loader.iterators
+        info['split_index'] = loader.split_index
+        info['best_val_score'] = best_val_score
+        info['opts'] = opts
+        info['vocabulary'] = loader.get_vocab()
+        info['stage'] = 2
+        with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '.pkl'), 'wb') as infofile:
+            cPickle.dump(info, infofile)
+
         logging.info("Training complete")
+        torch.cuda.empty_cache()
 
     if opts.train_mode <= 3:
         logging.info("STAGE 3: Training relation model")
@@ -404,6 +525,8 @@ def train(opts):
         for param in model.module.logit.parameters():
             if param is not None:
                 param.requires_grad = True
+
+        opts.epoch_num *= 2
 
         while True:
             # update learning rate, including lr_decay and schedule_sample 这部分暂时跳过，有关学习率调整的，先放下
@@ -500,8 +623,60 @@ def train(opts):
                 history['loss_history'] = loss_history
                 history['lr_history'] = lr_history
                 history['ss_prob_history'] = ss_prob_history
-                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history,
-                                                  val_result_history, iteration, best_val_score, 3)
+                logging.info("Start validation")
+                # eval model
+                eval_kwargs = {'split': 'val',
+                               'dataset': opts.input_json,
+                               'stage': 3}
+                eval_kwargs.update(vars(opts))
+
+                val_loss, predictions, lang_stats = eval_utils.eval_split(model, criterion, loader, eval_kwargs)
+
+                val_result_history[iteration] = {'loss': val_loss, 'lang_stats': lang_stats, 'predictions': predictions}
+
+                # Save model if is improving on validation result 如果取language，就以CIDEr为准，否则是loss
+                if opts.language_eval == 1:
+                    current_score = lang_stats['CIDEr']
+                else:
+                    current_score = - val_loss
+
+                best_flag = False
+                if best_val_score is None or current_score > best_val_score:
+                    best_val_score = current_score
+                    best_flag = True
+
+                # 写入检查点
+                checkpoint_path = os.path.join(opts.checkpoint_path, 'model.pth')
+                torch.save(model.module.state_dict(), checkpoint_path)
+                logging.info("model saved to {}".format(checkpoint_path))
+                optimizer_path = os.path.join(opts.checkpoint_path, 'optimizer.pth')
+                torch.save(optimizer.state_dict(), optimizer_path)
+
+                # Dump miscellaneous information
+
+                info['best_val_score'] = best_val_score
+                info['opts'] = opts
+                info['vocabulary'] = loader.get_vocab()
+                info['stage'] = 3
+
+                history['val_result_history'] = val_result_history
+
+                with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '.pkl'), 'wb') as infofile:
+                    cPickle.dump(info, infofile)
+                with open(os.path.join(opts.checkpoint_path, 'history_' + opts.train_id + '.pkl'), 'wb') as historyfile:
+                    cPickle.dump(history, historyfile)
+                logging.info("Checkpoint Saved")
+
+                # 选择的最佳模型
+                if best_flag:
+                    checkpoint_path = os.path.join(opts.checkpoint_path, 'model-best.pth')
+                    torch.save(model.module.state_dict(), checkpoint_path)
+                    logging.info("model saved to {}".format(checkpoint_path))
+                    with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '-best.pkl'),
+                              'wb') as bestfile:
+                        cPickle.dump(info, bestfile)
+
+                logging.info("validation complete")
                 # Write validation result into summary
                 if tf is not None:
                     add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -520,8 +695,60 @@ def train(opts):
                 history['loss_history'] = loss_history
                 history['lr_history'] = lr_history
                 history['ss_prob_history'] = ss_prob_history
-                val_loss, lang_stats = validation(opts, model, criterion, optimizer, loader, info, history,
-                                                  val_result_history, iteration, best_val_score, 3)
+                logging.info("Start validation")
+                # eval model
+                eval_kwargs = {'split': 'val',
+                               'dataset': opts.input_json,
+                               'stage': 3}
+                eval_kwargs.update(vars(opts))
+
+                val_loss, predictions, lang_stats = eval_utils.eval_split(model, criterion, loader, eval_kwargs)
+
+                val_result_history[iteration] = {'loss': val_loss, 'lang_stats': lang_stats, 'predictions': predictions}
+
+                # Save model if is improving on validation result 如果取language，就以CIDEr为准，否则是loss
+                if opts.language_eval == 1:
+                    current_score = lang_stats['CIDEr']
+                else:
+                    current_score = - val_loss
+
+                best_flag = False
+                if best_val_score is None or current_score > best_val_score:
+                    best_val_score = current_score
+                    best_flag = True
+
+                # 写入检查点
+                checkpoint_path = os.path.join(opts.checkpoint_path, 'model.pth')
+                torch.save(model.module.state_dict(), checkpoint_path)
+                logging.info("model saved to {}".format(checkpoint_path))
+                optimizer_path = os.path.join(opts.checkpoint_path, 'optimizer.pth')
+                torch.save(optimizer.state_dict(), optimizer_path)
+
+                # Dump miscellaneous information
+
+                info['best_val_score'] = best_val_score
+                info['opts'] = opts
+                info['vocabulary'] = loader.get_vocab()
+                info['stage'] = 3
+
+                history['val_result_history'] = val_result_history
+
+                with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '.pkl'), 'wb') as infofile:
+                    cPickle.dump(info, infofile)
+                with open(os.path.join(opts.checkpoint_path, 'history_' + opts.train_id + '.pkl'), 'wb') as historyfile:
+                    cPickle.dump(history, historyfile)
+                logging.info("Checkpoint Saved")
+
+                # 选择的最佳模型
+                if best_flag:
+                    checkpoint_path = os.path.join(opts.checkpoint_path, 'model-best.pth')
+                    torch.save(model.module.state_dict(), checkpoint_path)
+                    logging.info("model saved to {}".format(checkpoint_path))
+                    with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '-best.pkl'),
+                              'wb') as bestfile:
+                        cPickle.dump(info, bestfile)
+
+                logging.info("validation complete")
                 # Write validation result into summary
                 if tf is not None:
                     add_summary_value(tf_summary_writer, 'validation loss', val_loss, iteration)
@@ -531,63 +758,3 @@ def train(opts):
                 break
 
         logging.info("Training complete")
-
-
-
-def validation(opts, model, criterion, optimizer, loader, info, history, val_result_history, iteration, best_val_score,
-               stage_id):
-    logging.info("Start validation")
-    # eval model
-    eval_kwargs = {'split': 'val',
-                   'dataset': opts.input_json,
-                   'stage': stage_id}
-    eval_kwargs.update(vars(opts))
-
-    val_loss, predictions, lang_stats = eval_utils.eval_split(model, criterion, loader, eval_kwargs)
-
-    val_result_history[iteration] = {'loss': val_loss, 'lang_stats': lang_stats, 'predictions': predictions}
-
-    # Save model if is improving on validation result 如果取language，就以CIDEr为准，否则是loss
-    if opts.language_eval == 1:
-        current_score = lang_stats['CIDEr']
-    else:
-        current_score = - val_loss
-
-    best_flag = False
-    if best_val_score is None or current_score > best_val_score:
-        best_val_score = current_score
-        best_flag = True
-
-    # 写入检查点
-    checkpoint_path = os.path.join(opts.checkpoint_path, 'model.pth')
-    torch.save(model.module.state_dict(), checkpoint_path)
-    logging.info("model saved to {}".format(checkpoint_path))
-    optimizer_path = os.path.join(opts.checkpoint_path, 'optimizer.pth')
-    torch.save(optimizer.state_dict(), optimizer_path)
-
-    # Dump miscellaneous information
-
-    info['best_val_score'] = best_val_score
-    info['opts'] = opts
-    info['vocabulary'] = loader.get_vocab()
-    info['stage'] = stage_id
-
-    history['val_result_history'] = val_result_history
-
-    with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '.pkl'), 'wb') as infofile:
-        cPickle.dump(info, infofile)
-    with open(os.path.join(opts.checkpoint_path, 'history_' + opts.train_id + '.pkl'), 'wb') as historyfile:
-        cPickle.dump(history, historyfile)
-    logging.info("Checkpoint Saved")
-
-    # 选择的最佳模型
-    if best_flag:
-        checkpoint_path = os.path.join(opts.checkpoint_path, 'model-best.pth')
-        torch.save(model.module.state_dict(), checkpoint_path)
-        logging.info("model saved to {}".format(checkpoint_path))
-        with open(os.path.join(opts.checkpoint_path, 'info_' + opts.train_id + '-best.pkl'), 'wb') as bestfile:
-            cPickle.dump(info, bestfile)
-
-    logging.info("validation complete")
-
-    return val_loss, lang_stats

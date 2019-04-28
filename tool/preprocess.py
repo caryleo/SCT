@@ -253,8 +253,12 @@ def preprocess_captions(opts):
     for index, image in enumerate(images):
         output_image = dict()
         output_image["split"] = image["split"]
-        output_image["filepath"] = os.path.join(image["filepath"], image["filename"])
-        output_image["cocoid"] = image["cocoid"]
+        if dataset == 'coco':
+            output_image["filepath"] = os.path.join(image["filepath"], image["filename"])
+            output_image["cocoid"] = image["cocoid"]
+        else:
+            output_image["filepath"] = image["filename"]
+            output_image["cocoid"] = image["imgid"]
         if image_root != "":
             with Image.open(os.path.join(image_root, output_image["filepath"])) as img:
                 output_image["width"], output_image["height"] = img.size
@@ -306,7 +310,9 @@ def preprocess_features(opts):
     feature_net.eval()
     logging.info("Load pretrained resnet model complete")
 
-    images = json.load(open(path_to_input_json, 'r'))["images"]
+    file = json.load(open(path_to_input_json, 'r'))
+    images = file["images"]
+    dataset = file['dataset']
     num_images = len(images)
 
     # feature directories
@@ -317,7 +323,11 @@ def preprocess_features(opts):
     # feature extraction
     logging.info("Extracting features")
     for index, image in enumerate(images):
-        input_image = skimage.io.imread(os.path.join(image_root, image["filepath"], image["filename"]))
+        if dataset == 'coco':
+            input_image = skimage.io.imread(os.path.join(image_root, image["filepath"], image["filename"]))
+        else:
+            input_image = skimage.io.imread(os.path.join(image_root, image["filename"]))
+
         # gray_scale images
         if len(input_image.shape) == 2:
             input_image = input_image[:, :, np.newaxis]  # add one dimension
@@ -332,13 +342,20 @@ def preprocess_features(opts):
             input_img = input_img.unsqueeze(0)
             feat_fc, feat_att = feature_net(input_img, attention_size)
             logging.debug("%s %s" % (feat_fc.shape, feat_att.shape))
-
-        file_of_fc_feature.create_dataset(str(image["cocoid"]),
-                                          dtype="float32",
-                                          data=feat_fc.to("cpu", torch.float).numpy())
-        file_of_att_feature.create_dataset(str(image["cocoid"]),
-                                           dtype="float32",
-                                           data=feat_att.to("cpu", torch.float).numpy())
+        if dataset == 'coco':
+            file_of_fc_feature.create_dataset(str(image["cocoid"]),
+                                              dtype="float32",
+                                              data=feat_fc.to("cpu", torch.float).numpy())
+            file_of_att_feature.create_dataset(str(image["cocoid"]),
+                                               dtype="float32",
+                                               data=feat_att.to("cpu", torch.float).numpy())
+        else:
+            file_of_fc_feature.create_dataset(str(image["imgid"]),
+                                              dtype="float32",
+                                              data=feat_fc.to("cpu", torch.float).numpy())
+            file_of_att_feature.create_dataset(str(image["imgid"]),
+                                               dtype="float32",
+                                               data=feat_att.to("cpu", torch.float).numpy())
 
         if index % 100 == 0:
             logging.info('Processing %d / %d (%.2f%%)' % (index, num_images, index * 100.0 / num_images))
