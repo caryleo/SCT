@@ -131,6 +131,11 @@ def parse_arg():
                         type=int,
                         help="number of epoch")
 
+    parser.add_argument('-epo3', '--epoch_num3',
+                        default=20,
+                        type=int,
+                        help="number of epoch in stage 3")
+
     parser.add_argument('-dropout', "--dropout_prob",
                         default=0.5,
                         type=float,

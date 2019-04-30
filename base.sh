@@ -19,5 +19,5 @@ python sct.py \
 -savechkpteve3 1000 \
 -epo 20 \
 -best1 data/best1 \
--best3 data/best3
-# -start log/base_0428 \
+-best3 data/best3 \
+-start log/base_0428

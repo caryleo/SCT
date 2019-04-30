@@ -540,7 +540,7 @@ def train(opts):
             if param is not None:
                 param.requires_grad = True
 
-        opts.epoch_num *= 2
+        opts.epoch_num += opts.epoch_num3
 
         while True:
             # update learning rate, including lr_decay and schedule_sample 这部分暂时跳过，有关学习率调整的，先放下
@@ -690,10 +690,10 @@ def train(opts):
                               'wb') as bestfile:
                         cPickle.dump(info, bestfile)
 
-                    best1 = os.path.join(opts.best_models_1, 'model_' + opts.train_id + '-best1.pth')
+                    best1 = os.path.join(opts.best_models_3, 'model_' + opts.train_id + '-best3.pth')
                     torch.save(model.module.state_dict(), best1)
                     logging.info("model saved to {}".format(best1))
-                    with open(os.path.join(opts.best_models_1, 'info_' + opts.train_id + '-best.pkl'),
+                    with open(os.path.join(opts.best_models_3, 'info_' + opts.train_id + '-best.pkl'),
                               'wb') as bestfile:
                         cPickle.dump(info, bestfile)
 
