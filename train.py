@@ -769,10 +769,10 @@ def train(opts):
                               'wb') as bestfile:
                         cPickle.dump(info, bestfile)
 
-                    best1 = os.path.join(opts.best_models_1, 'model_' + opts.train_id + '-best1.pth')
+                    best1 = os.path.join(opts.best_models_3, 'model_' + opts.train_id + '-best3.pth')
                     torch.save(model.module.state_dict(), best1)
                     logging.info("model saved to {}".format(best1))
-                    with open(os.path.join(opts.best_models_1, 'info_' + opts.train_id + '-best.pkl'),
+                    with open(os.path.join(opts.best_models_3, 'info_' + opts.train_id + '-best.pkl'),
                               'wb') as bestfile:
                         cPickle.dump(info, bestfile)
 
