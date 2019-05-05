@@ -29,26 +29,38 @@ def parse_arg():
 
     # preprocess captions
     parser.add_argument('-incapjson', "--input_caption_json",
+                        type=str,
                         default="",
                         help="Path to input split json to preprocess the captions")
 
     parser.add_argument('-outcapjson', "--output_caption_json",
+                        type=str,
                         default="data/sct_caps2idx.json",
                         help="Path to output the result json of processing the captions")
 
     parser.add_argument('-outcaph5', "--output_caption_h5",
+                        type=str,
                         default="data/sct_caps.h5",
                         help="Path to output the result h5 of processing the captions")
 
     parser.add_argument('-maxlen', "--max_sentence_length",
+                        type=int,
                         default=16,
                         help="The maximal length of sentence, exceeding part will be truncated")
 
     parser.add_argument('-wordthres', "--word_threshold",
+                        type=int,
                         default=5,
                         help="The threshold of the number of occurrences of words in all captions, "
                              "rare words will be replaced by token UNK")
+
+    parser.add_argument('-nounthres', '--noun_threshold',
+                        type=int,
+                        default=None,
+                        help="threhshold for nouns")
+
     parser.add_argument('-imgrt', "--image_root",
+                        type=str,
                         default="",
                         help="root directory of images")
 
@@ -362,6 +374,16 @@ def parse_arg():
                         type=int,
                         default=-1,
                         help='how many images to use when periodically evaluating the loss? (-1 = all)')
+
+    parser.add_argument('-em', '--eval_mode',
+                        type=int,
+                        default=1,
+                        help="eval mode, same as train mode")
+
+    parser.add_argument('-met', '--metric',
+                        type=int,
+                        default=1,
+                        help='the metric we want, 1 for coco, 2 for few-coco, 3 for acc, 4 for f')
 
     parser.add_argument('-dumpimg', '--dump_images',
                         type=int,

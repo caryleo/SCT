@@ -47,8 +47,11 @@ def preprocess_captions(opts):
 
     # load word threshold and maximal sentence length
     word_threshold = opts.word_threshold
+    noun_threshold = opts.noun_threshold
     max_sentence_length = opts.max_sentence_length
     logging.info("Word occurrences threshold: %d" % word_threshold)
+    if noun_threshold is not None:
+        logging.info("Noun occurrences threshold: %d" % noun_threshold)
     logging.info("Maximal sentence length: %d" % max_sentence_length)
 
     # count word occurrences, noun occurrences and sentence length
@@ -89,6 +92,7 @@ def preprocess_captions(opts):
     vocabulary = list()  # all legal words
     noun_sum = sum(noun_occurrences.values())
     nouns = list()  # all legal nouns
+    rare_nouns = list()
     rares = list()  # all illegal words
     for word, times in word_occurrences.items():
         if times <= word_threshold:
@@ -96,6 +100,8 @@ def preprocess_captions(opts):
         else:
             if word in noun_occurrences.keys():
                 nouns.append(word)
+                if noun_threshold is not None and noun_occurrences.get(word) <= noun_threshold:
+                    rare_nouns.append(word) # if none. no words in rare_nouns
             vocabulary.append(word)
 
     rare_sum = sum(word_occurrences[rare] for rare in rares)
@@ -105,6 +111,8 @@ def preprocess_captions(opts):
                  (len(nouns), len(word_occurrences), len(nouns) * 100.0 / len(word_occurrences)))
     logging.info("Number of nouns: %d / %d (%.2f%%)" %
                  (noun_sum, word_sum, noun_sum * 100.0 / word_sum))
+    logging.info("Size of rare nouns: %d / %d (%.2f%%)" %
+                 (len(rare_nouns), len(nouns), (len(rare_nouns) * 100.0 / len(nouns))))
     logging.info("Size of rares: %d / %d (%.2f%%)" %
                  (len(rares), len(word_occurrences), len(rares) * 100.0 / len(word_occurrences)))
     logging.info("Number of rares, or UNK replacements: %d / %d (%.2f%%)" %
@@ -148,11 +156,15 @@ def preprocess_captions(opts):
     noun_count = 1 # 注意单词表以1开始，因为0是BOS
     other_count = nouns_size + 1 # 7669
     for word in vocabulary:
-        if word in nouns:
+        if noun_threshold is None and word in nouns: # all nouns
             dict_index_to_word[noun_count] = word
             dict_word_to_index[word] = noun_count
             noun_count += 1
-        else:
+        elif noun_threshold is not None and word in rare_nouns: # rare nouns
+            dict_index_to_word[noun_count] = word
+            dict_word_to_index[word] = noun_count
+            noun_count += 1
+        else: # other (none, others; not none other nouns and others)
             dict_index_to_word[other_count] = word
             dict_word_to_index[word] = other_count
             other_count += 1
@@ -168,6 +180,9 @@ def preprocess_captions(opts):
     # nouns specially
     dict_nouns = dict()  # nouns for captions
     dict_nouns_captions = dict()  # nouns for each caption
+
+    # for Few-COCO
+    list_few_coco = list()
 
     caption_count = 0  # for all captions, 0-indexed
     caption_per_image_start = 1
@@ -186,12 +201,20 @@ def preprocess_captions(opts):
                 if pos < max_sentence_length:
                     if word not in rares:
                         captions_per_image[tag, pos] = dict_word_to_index[word]
-                        if word in nouns:
+                        if noun_threshold is None and word in nouns:
                             # for every noun, store the caption index and position (noun index to caption index & pos)
                             dict_nouns[dict_word_to_index[word]] = dict_nouns.get(dict_word_to_index[word], [])
                             dict_nouns[dict_word_to_index[word]].append((caption_per_image_start + tag, pos))
                             # for every caption, store the noun index and position (caption index to noun index & pos)
                             dict_nouns_captions[caption_per_image_start + tag] = dict_nouns_captions.get(caption_per_image_start + tag, [])
+                            dict_nouns_captions[caption_per_image_start + tag].append((dict_word_to_index[word], pos))
+                        elif noun_threshold is not None and word in rare_nouns:
+                            # for every noun, store the caption index and position (noun index to caption index & pos)
+                            dict_nouns[dict_word_to_index[word]] = dict_nouns.get(dict_word_to_index[word], [])
+                            dict_nouns[dict_word_to_index[word]].append((caption_per_image_start + tag, pos))
+                            # for every caption, store the noun index and position (caption index to noun index & pos)
+                            dict_nouns_captions[caption_per_image_start + tag] = dict_nouns_captions.get(
+                                caption_per_image_start + tag, [])
                             dict_nouns_captions[caption_per_image_start + tag].append((dict_word_to_index[word], pos))
                     else:
                         captions_per_image[tag, pos] = dict_word_to_index["UNK"]
@@ -238,8 +261,12 @@ def preprocess_captions(opts):
     # output_json["nouns_indices"] = array_nouns_indices
     # logging.info("Writing noun index")
     # output_json["noun_to_index"] = dict_noun_to_index
-    logging.info("Writing nouns")
-    output_json["nouns"] = nouns
+    if noun_threshold is None:
+        logging.info("Writing nouns")
+        output_json["nouns"] = nouns
+    else:
+        logging.info("Threshold for nouns is specified, writing rare nouns")
+        output_json["nouns"] = rare_nouns
     logging.info("Writing nouns in captions, each entry has a list of captions and corresponding position")
     output_json["nouns_in_captions"] = dict_nouns
     logging.info("Writing captions for nouns , each entry has a list of nouns and corresponding position")
@@ -263,8 +290,17 @@ def preprocess_captions(opts):
             with Image.open(os.path.join(image_root, output_image["filepath"])) as img:
                 output_image["width"], output_image["height"] = img.size
 
+        # few coco only for test split
+        if image['split'] == 'test':
+            start_index = array_index_start[index]
+            end_index = array_index_end[index]
+            for tag in range(start_index, end_index + 1):
+                if tag in dict_nouns_captions:
+                    list_few_coco.append(index)
+
         output_json["images"].append(output_image)
 
+    output_json['few']=list_few_coco
     json.dump(output_json, open(path_to_output_json, 'w'))
     logging.info("Create json file complete")
     logging.info("Preprocess for captions complete")

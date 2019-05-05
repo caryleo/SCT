@@ -521,8 +521,6 @@ def train(opts):
         logging.info("Start training")
         model.module.memory_ready()
 
-
-
         # 将train划分重置
         loader.reset_iterator("train")
         logging.warning("Changing batch size to %d" % opts.batch_size_3)

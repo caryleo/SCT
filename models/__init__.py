@@ -14,7 +14,7 @@ from .RelationModel import RelationModel
 from .OutputModel import OutputModel
 
 
-def setup(opts, stage_id):
+def setup(opts, stage_id=0):
     logging.info("Preparing model: %s" % opts.caption_model)
     if opts.caption_model == "base":
         model = BaseModel(opts)

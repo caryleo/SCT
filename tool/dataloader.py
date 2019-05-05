@@ -61,6 +61,10 @@ class DataLoader(data.Dataset):
         logging.info('Loading input json file: %s' % opts.input_json)
         self.input_info_json = json.load(open(self.opts.input_json))
         self.index_to_word = self.input_info_json['index_to_word']
+        if opts.mode == 'train':
+           self.list_few_coco = list()
+        else:
+            self.list_few_coco = self.input_info_json['few']
         # self.noun_to_index = self.input_info_json["noun_to_index"]
         self.nouns = self.input_info_json["nouns"]
         # self.nouns_indices = self.input_info_json["nouns_indices"]
@@ -85,8 +89,8 @@ class DataLoader(data.Dataset):
         logging.info('Load input captions h5 file complete')
 
         # separate out indexes for each of the provided splits
-        logging.info("Spliting into 3 datasets")
-        self.split_index = {'train': list(), 'val': list(), 'test': list()}
+        logging.info("Spliting into 4 datasets")
+        self.split_index = {'train': list(), 'val': list(), 'test': list(), 'few-test': list()}
         for index in range(len(self.input_info_json['images'])):
             image = self.input_info_json['images'][index]
             if image['split'] == 'train':
@@ -95,14 +99,19 @@ class DataLoader(data.Dataset):
                 self.split_index['val'].append(index)
             elif image['split'] == 'test':
                 self.split_index['test'].append(index)
+
+                if index in self.list_few_coco:
+                    self.split_index['few-test'].append(index)
+
             elif opts.train_only == 0:  # restval split
                 self.split_index['train'].append(index)
 
         logging.info('assigned %d images to split train' % len(self.split_index['train']))
         logging.info('assigned %d images to split val' % len(self.split_index['val']))
         logging.info('assigned %d images to split test' % len(self.split_index['test']))
+        logging.info('assigned %d images to split few-test' % len(self.split_index['few-test']))
 
-        self.iterators = {'train': 0, 'val': 0, 'test': 0}
+        self.iterators = {'train': 0, 'val': 0, 'test': 0, 'few-test': 0}
 
         # 针对三个split分别创建一个取数据的进程
         self._prefetch_process = {}  # The three prefetch process
