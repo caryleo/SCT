@@ -43,6 +43,7 @@ if __name__ == "__main__":
     assert opts.cuda_device != '', "NO CUDA DEVICE SPECIFIED"
 
     os.environ['CUDA_VISIBLE_DEVICES'] = opts.cuda_device
+    # os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     logging.info("Device Using: %s" % opts.cuda_device)
 
     # check mode

@@ -62,9 +62,10 @@ class DataLoader(data.Dataset):
         self.input_info_json = json.load(open(self.opts.input_json))
         self.index_to_word = self.input_info_json['index_to_word']
         if opts.mode == 'train':
-           self.list_few_coco = list()
+            self.list_few_coco = list()
         else:
             self.list_few_coco = self.input_info_json['few']
+        # self.list_few_coco = list()
         # self.noun_to_index = self.input_info_json["noun_to_index"]
         self.nouns = self.input_info_json["nouns"]
         # self.nouns_indices = self.input_info_json["nouns_indices"]
@@ -141,6 +142,8 @@ class DataLoader(data.Dataset):
         mask_batch = np.zeros(
             [batch_size * caps_per_img, self.max_caption_length + 2], dtype='float32')
 
+        nouns_in_caption = list()
+
         # 这个变量用于判断一次是否已经到头
         wrapped = False
 
@@ -167,10 +170,21 @@ class DataLoader(data.Dataset):
                 for q in range(caps_per_img):
                     ixl = random.randint(index1, index2)
                     caps[q, :] = self.captions_h5['captions'][ixl, :self.max_caption_length]
+                    if self.opts.mode == 'eval' and self.opts.metric == 4:
+                        if str(q + 1) not in self.dict_nouns_captions:
+                            nouns_in_caption.append([])
+                        else:
+                            nouns_in_caption.append(self.dict_nouns_captions[str(q + 1)])
             else:
                 # 如果多了，就取够就好
                 ixl = random.randint(index1, index2 - caps_per_img + 1)
                 caps = self.captions_h5['captions'][ixl: ixl + caps_per_img, :self.max_caption_length]
+                if self.opts.mode == 'eval' and self.opts.metric == 4:
+                    for tag in range(ixl, ixl + caps_per_img):
+                        if str(tag + 1) not in self.dict_nouns_captions:
+                            nouns_in_caption.append([])
+                        else:
+                            nouns_in_caption.append(self.dict_nouns_captions[str(tag + 1)])
 
             # put the caption in the middle: [0] is 0 and [max_length+1] is 0 把整个描述放到中间，前后补0，实际上充当BOS和EOS
             caption_batch[i * caps_per_img: (i + 1) * caps_per_img, 1: self.max_caption_length + 1] = caps
@@ -198,6 +212,7 @@ class DataLoader(data.Dataset):
         data_all = {'fc_feats': np.stack(fc_batch),
                     'att_feats': np.stack(att_batch),
                     'captions': caption_batch,
+                    'nouns_in_caption': nouns_in_caption,
                     'gts': gts,
                     'masks': mask_batch,
                     # bounds用于明确边界

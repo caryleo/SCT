@@ -95,7 +95,7 @@ def parse_arg():
 
     parser.add_argument('-injson', "--input_json",
                         type=str,
-                        default="data/sct_caps2idx.json",
+                        default="",
                         help="path to the input json containing the image info and vocabulary")
 
     parser.add_argument('-infeatdir', "--input_features_directory",

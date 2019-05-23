@@ -22,6 +22,7 @@ import torch.nn as nn
 
 def evaluation(opts):
     # Load infos
+    logging.info("Evaluation stage: %d" % opts.eval_mode)
     logging.info("Path to info: %s" % opts.info_path)
     logging.info("Path to model: %s" % opts.model_path)
     logging.info("Path to memory: %s" % opts.input_memory_h5)
@@ -56,12 +57,15 @@ def evaluation(opts):
     if opts.batch_size == 0:
         logging.info("No batch specified, using model infomation")
         opts.batch_size = info['opts'].batch_size
+
     if len(opts.train_id) == 0:
         logging.info("No id specified, using model infomation")
         opts.train_id = info['opts'].train_id
 
     # ignore = ["mode", "train_id", "batch_size", "beam_size", "start_from", "language_eval", "model_path", "eval_id",
     #           "num_images", "cuda_device", "checkpoint_path"]
+
+    logging.info("We are using batch: %d" % opts.batch_size)
 
     for k in vars(info['opts']).keys():
         # if k not in ignore:
@@ -110,13 +114,43 @@ def evaluation(opts):
     # So make sure to use the vocab in infos file.
     loader.index_to_word = info['vocabulary']
 
+    lang_stats = None
+    results = None
     # Set sample options
-    loss, split_predictions, lang_stats = eval_utils.eval_split(model, criterion, loader,
+    if opts.metric == 1:
+        loss, split_predictions, lang_stats = eval_utils.eval_split(model, criterion, loader,
                                                                 vars(opts))
+    else:
+        loss, split_predictions, results = eval_utils.eval_split(model, criterion, loader,
+                                                                    vars(opts))
 
     logging.info('loss: %f' % loss)
     if lang_stats is not None:
         logging.info("Results: \n" + json.dumps(lang_stats))
+
+    p_sum = 0.0
+    r_sum = 0.0
+    f_sum = 0.0
+
+    if results is not None:
+        result = dict()
+        for index in range(loader.get_nouns_size() + 1):
+            if index == 0: continue
+            if vocabulary[str(index)] == "UNK": continue
+            result[vocabulary[str(index)]] = dict()
+            result[vocabulary[str(index)]]['precision'] = results[0][index][0]
+            result[vocabulary[str(index)]]['recall'] = results[1][index][0]
+            result[vocabulary[str(index)]]['F1'] = results[2][index][0]
+            p_sum += results[0][index][0]
+            r_sum += results[1][index][0]
+            f_sum += results[2][index][0]
+
+        file = os.path.join('eval_results/', opts.train_id + '_' + 'F1-stage-' + str(opts.eval_mode) + '.json')
+        logging.info("Writing F1 scores in json file: %s" % file)
+        json.dump(result, open(file, 'w'))
+        logging.info("Average precision: %.8f" % (p_sum / loader.get_nouns_size()))
+        logging.info("Average recall: %.8f" % (r_sum / loader.get_nouns_size()))
+        logging.info("Average F1: %.8f" % (f_sum / loader.get_nouns_size()))
 
     if opts.dump_json == 1:
         # dump the json

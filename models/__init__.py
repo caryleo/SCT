@@ -9,7 +9,6 @@ import logging
 import torch
 
 from .BaseModel import BaseModel
-from .FinetuneModel import FinetuneModel
 from .RelationModel import RelationModel
 from .OutputModel import OutputModel
 
@@ -19,7 +18,7 @@ def setup(opts, stage_id=0):
     if opts.caption_model == "base":
         model = BaseModel(opts)
     elif opts.caption_model == "finetune":
-        model = FinetuneModel(opts)
+        model = BaseModel(opts)
     elif opts.caption_model == "relation":
         model = RelationModel(opts)
     elif opts.caption_model == "output":

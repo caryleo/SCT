@@ -48,6 +48,60 @@ def language_eval(dataset, preds, model_id, split):
 
     return out
 
+
+def classification_eval(loader, outputs, nouns_in_caption):
+    # print(len(outputs))
+    # print(len(nouns_in_caption))
+    assert len(outputs) == len(nouns_in_caption), "OOPSIE!"
+
+    length = len(loader.nouns)
+    values = np.zeros((length + 1, 3)) # tp, fp, np
+    # print(values.shape)
+    for i in range(len(outputs)):
+        output = outputs[i]
+        nouns_single = nouns_in_caption[i]
+        for noun in nouns_single:
+            if noun > 0:
+                if loader.get_vocab()[str(noun)] == "UNK": continue
+            if noun not in output:
+                values[noun, 2] += 1 # fn, true but not appears
+            else:
+                values[noun, 0] += 1 # tp, nouns and true
+
+        other = list()
+        for word in output:
+            if word > 0:
+                if loader.get_vocab()[str(word)] == "UNK": continue
+            if word <= length and word not in nouns_single and word not in other:
+                values[word, 1] += 1 # fp, nouns and false
+
+    tp = values[:, 0]
+    fp = values[:, 1]
+    fn = values[:, 2]
+
+    precision = np.zeros((length + 1, 1))
+    recall = np.zeros((length + 1, 1))
+    F1 = np.zeros((length + 1, 1))
+
+    for i in range(length + 1):
+        if tp[i] + fp[i] == 0:
+            precision[i] = 0.0
+        else:
+            precision[i] = float(tp[i]) / (tp[i] + fp[i])
+
+        if tp[i] + fn[i] == 0:
+            recall[i] = 0.0
+        else:
+            recall[i] = float(tp[i]) / (tp[i] + fn[i])
+
+        if precision[i] + recall[i] == 0:
+            F1[i] = 0.0
+        else:
+            F1[i] = 2.0 * (precision[i] * recall[i]) / (precision[i] + recall[i])
+
+    return (precision, recall, F1)
+
+
 def eval_split(model, crit, loader, eval_kwargs={}):
     num_images = eval_kwargs.get('num_images', eval_kwargs.get('val_images_use', -1))
     split = eval_kwargs.get('split', 'val')
@@ -57,6 +111,7 @@ def eval_split(model, crit, loader, eval_kwargs={}):
     device = eval_kwargs.get('cuda_device', -1)
     logging.info("Evaluating by device: %s", device)
     stage_id = eval_kwargs.get('stage', 0)
+    metric = eval_kwargs.get('metric', 1)
 
     # Make sure in the evaluation mode
     model.eval()
@@ -67,19 +122,27 @@ def eval_split(model, crit, loader, eval_kwargs={}):
     loss = 0
     loss_sum = 0
     loss_evals = 1e-8
-    predictions = []
+    predictions = list()
+    predictions_index = list()
+    nouns_in_captions = list()
+
+    logging.info("Sampling for evaluation")
     while True:
+        nouns_in_caption = None
         data = loader.get_batch(split)
         n = n + loader.batch_size
 
         if data.get('captions', None) is not None:
             # forward the model to get loss 这一部分直接出loss
             tmp = [data['fc_feats'], data['att_feats'], data['captions'], data['masks']]
+            if metric == 4:
+                nouns_in_caption = data['nouns_in_caption']
+
             with torch.no_grad():
                 tmp = [torch.from_numpy(_).cuda() for _ in tmp]
                 fc_feats, att_feats, labels, masks = tmp
                 outputs, rel_ress = model(fc_feats, att_feats, labels, stage_id)
-                if stage_id == 1 or stage_id == 2: #
+                if stage_id == 1 or stage_id == 2:  #
                     loss = crit(outputs, labels[:, 1:], masks[:, 1:]).item()
                 elif stage_id == 3:
                     loss = crit(outputs, rel_ress, labels[:, 1:], masks[:, 1:]).item()
@@ -100,6 +163,24 @@ def eval_split(model, crit, loader, eval_kwargs={}):
             seq, _, _ = model.module.sample(fc_feats, att_feats, stage_id, eval_kwargs)
 
         seq = seq.to("cpu").numpy()
+        if metric == 4:
+            predictions_index.extend(seq)
+
+        # print(len(predictions_index))
+        if metric == 4:
+            tag = 0
+            nouns_in_caption_single = list()
+            while tag < len(nouns_in_caption):
+                single = list()
+                for _ in range(loader.captions_per_image):
+                    entry = nouns_in_caption[tag] # a list of tuple (word index, pos in caption)
+                    for noun_pair in entry: # each tuple
+                        noun = noun_pair[0]
+                        if noun not in single:
+                            single.append(noun) # put all distinct nouns in single for each image
+                    tag += 1
+                nouns_in_caption_single.append(single) # for the batch
+            nouns_in_captions.extend(nouns_in_caption_single)
 
         # set_trace()
         sents = utils.decode_sequence(loader.get_vocab(), seq)
@@ -129,23 +210,41 @@ def eval_split(model, crit, loader, eval_kwargs={}):
         for i in range(n - ix1):
             predictions.pop()
 
-        logging.debug('evaluating validation performance... %d / %d (%f)' % (ix0 - 1, ix1, loss))
-        if (ix0 - 1) % (loader.batch_size * 10) == 0 :
-            logging.info('evaluating validation performance... %d / %d (%f)' % (ix0 - 1, ix1, loss))
-        # if (ix0 - 1) % (loader.batch_size * 10):
-        #     logging.debug('evaluating validation performance... %d / %d (%f)' % (ix0 - 1, ix1, loss))
+            if metric == 4:
+                predictions_index.pop()
+                nouns_in_captions.pop()
+
+        logging.debug('evaluating validation performance... %d / %d (%f)' % (ix0, ix1, loss))
+        if ix0 % (loader.batch_size * 8) == 0:
+            logging.info('evaluating validation performance... %d / %d (%f)' % (ix0, ix1, loss))
 
         if data['bounds']['wrapped']:
             break
 
         if 0 <= num_images <= n:
             break
+    logging.info("Sampling complete")
 
-    logging.getLogger('').setLevel(logging.ERROR)
     lang_stats = None
-    if lang_eval == 1:
-        lang_stats = language_eval(dataset, predictions, eval_kwargs['train_id'], split)
-    logging.getLogger('').setLevel(logging.INFO)
+
+    results = None
+
+    if metric == 1:
+        logging.info("Language evaluation")
+        logging.getLogger('').setLevel(logging.ERROR)
+
+        if lang_eval == 1:
+            lang_stats = language_eval(dataset, predictions, eval_kwargs['train_id'], split)
+        logging.getLogger('').setLevel(logging.INFO)
+        logging.info("Language evaluation complete")
+    else:
+        logging.info("F val evaluation")
+        results = classification_eval(loader, predictions_index, nouns_in_captions)
+        logging.info("F val evaluation complete")
+
     # Switch back to training mode
     model.train()
-    return loss_sum / loss_evals, predictions, lang_stats
+    if metric == 1:
+        return loss_sum / loss_evals, predictions, lang_stats
+    else:
+        return loss_sum / loss_evals, predictions, results

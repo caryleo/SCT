@@ -55,6 +55,8 @@ def train(opts):
     # 准备处理信息块和结果历史
     info = dict()
     history = dict()
+
+    skip = False
     if opts.start_from is not None:
         logging.info("Starting from checkpoint")
         # open old info and check if models are compatible 存在既有的记录，读取之
@@ -68,6 +70,10 @@ def train(opts):
         if os.path.isfile(os.path.join(opts.start_from, 'history_' + opts.train_id + '.pkl')):
             with open(os.path.join(opts.start_from, 'history_' + opts.train_id + '.pkl'), 'rb') as history_file:
                 history = cPickle.load(history_file)
+        if opts.train_mode != 0 and opts.train_mode < info['stage']:
+            skip = False
+        else:
+            skip = True
         opts.train_mode = info['stage']
         logging.info("Load checkpoint complete")
 
@@ -538,7 +544,30 @@ def train(opts):
             if param is not None:
                 param.requires_grad = True
 
-        opts.epoch_num += opts.epoch_num3
+        if opts.caption_model == 'finetune':
+            # Attention finetuning
+            for param in model.module.word_embed.parameters():
+                if param is not None:
+                    param.requires_grad = True
+
+            for param in model.module.att_embed.parameters():
+                if param is not None:
+                    param.requires_grad = True
+
+            for param in model.module.ctx2att.parameters():
+                if param is not None:
+                    param.requires_grad = True
+
+            for param in model.module.core.attention.parameters():
+                if param is not None:
+                    param.requires_grad = True
+
+        if opts.train_mode < 3 or not skip:
+            opts.epoch_num += opts.epoch_num3
+        else:
+            opts.epoch_num = opts.epoch_num3
+
+        logging.info("Final epoch: %d" % opts.epoch_num)
 
         while True:
             # update learning rate, including lr_decay and schedule_sample 这部分暂时跳过，有关学习率调整的，先放下

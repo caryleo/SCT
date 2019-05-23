@@ -118,6 +118,8 @@ class BaseModel(nn.Module):
             #     # 如果所有的caption这个时候都是0了，就结束了
             #     break
 
+            logging.debug(wordt.size())
+            logging.debug(self.word_embed)
             xt = self.word_embed(wordt)  # 将单词编码，batch * encoding，64*9487 - 64*512
 
             output, state, rel_res = self.core(wordt, xt, fc_feats, att_feats, context_att_feats, state, stage_id)

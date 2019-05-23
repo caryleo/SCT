@@ -152,7 +152,11 @@ def preprocess_captions(opts):
     #     dict_noun_to_index[noun] = index
 
     # NOTE:: 改变了整个词汇表，将名词挪到最前面
-    nouns_size = len(nouns)
+    if noun_threshold is None:
+        nouns_size = len(nouns)
+    else:
+        nouns_size = len(rare_nouns)
+
     noun_count = 1 # 注意单词表以1开始，因为0是BOS
     other_count = nouns_size + 1 # 7669
     for word in vocabulary:
@@ -218,10 +222,11 @@ def preprocess_captions(opts):
                             dict_nouns_captions[caption_per_image_start + tag].append((dict_word_to_index[word], pos))
                     else:
                         captions_per_image[tag, pos] = dict_word_to_index["UNK"]
-                        dict_nouns["UNK"] = dict_nouns.get("UNK", [])
-                        dict_nouns["UNK"].append((caption_per_image_start + tag, pos))
-                        dict_nouns_captions[caption_per_image_start + tag] = dict_nouns_captions.get(caption_per_image_start + tag, [])
-                        dict_nouns_captions[caption_per_image_start + tag].append((dict_word_to_index["UNK"], pos))
+                        if noun_threshold is None:
+                            dict_nouns["UNK"] = dict_nouns.get("UNK", [])
+                            dict_nouns["UNK"].append((caption_per_image_start + tag, pos))
+                            dict_nouns_captions[caption_per_image_start + tag] = dict_nouns_captions.get(caption_per_image_start + tag, [])
+                            dict_nouns_captions[caption_per_image_start + tag].append((dict_word_to_index["UNK"], pos))
 
         array_captions.append(captions_per_image)
         array_index_start[index] = caption_per_image_start
