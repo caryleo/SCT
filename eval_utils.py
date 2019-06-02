@@ -11,7 +11,13 @@ import utils.misc as utils
 def language_eval(dataset, preds, model_id, split):
     import sys
     sys.path.append("coco-caption")
-    annFile = 'coco-caption/annotations/captions_val2014.json'
+    if dataset == 'coco':
+        annFile = 'coco-caption/annotations/captions_val2014.json'
+    elif dataset == 'flickr8k':
+        annFile = 'coco-caption/annotations/captions_flickr8k.json'
+    else:
+        annFile = 'coco-caption/annotations/captions_flickr30k.json'
+
     from pycocotools.coco import COCO
     from pycocoevalcap.eval import COCOEvalCap
 
@@ -109,7 +115,8 @@ def eval_split(model, crit, loader, eval_kwargs={}):
     dataset = eval_kwargs.get('dataset', 'coco')
     beam_size = eval_kwargs.get('beam_size', 1)
     device = eval_kwargs.get('cuda_device', -1)
-    logging.info("Evaluating by device: %s", device)
+    logging.info("Evaluating by device: %s" % device)
+    logging.info("Dataset used: %s" % dataset)
     stage_id = eval_kwargs.get('stage', 0)
     metric = eval_kwargs.get('metric', 1)
 

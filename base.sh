@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 python sct.py \
 -m train \
--id base_0521 \
+-id base_0523 \
 -model base \
--cuda 0,1,2,4 \
+-cuda 0,1,2,3 \
 -injson data/sct_coco_100.json \
 -infeatdir data/features_14 \
 -incaph5 data/sct_coco_100.h5 \
 -outmemdir data/memory \
--inmemh5 data/memory/memory_base_0521.h5 \
+-inmemh5 data/memory/memory_base_0523.h5 \
 -tm 1 \
--tdir log/base_0521 \
--chkpt log/base_0521 \
+-tdir log/base_0523 \
+-chkpt log/base_0523 \
 -laneval 1 \
 -batch 256 \
 -batch3 64 \
@@ -22,5 +22,6 @@ python sct.py \
 -best1 data/best1 \
 -best3 data/best3 \
 -lr 4e-4 \
--fusecoef 0.5 \
+-fusecoef 0.25 \
+-rebest 0
 # -start log/base_0513

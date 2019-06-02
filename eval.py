@@ -108,7 +108,7 @@ def evaluation(opts):
         loader = DataLoaderRaw({'folder_path': opts.image_folder,
                                 'coco_json': opts.coco_json,
                                 'batch_size': opts.batch_size,
-                                'cnn_model': opts.cnn_model})
+                                'cnn_model': opts.model})
 
     # When eval using provided pretrained model, the vocab may be different from what you have in your cocotalk.json
     # So make sure to use the vocab in infos file.

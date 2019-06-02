@@ -58,7 +58,7 @@ class DataLoader(data.Dataset):
         # self.use_att = getattr(opts, 'use_att', True)
 
         # load json file which contains additional information about dataset
-        logging.info('Loading input json file: %s' % opts.input_json)
+        logging.info('Loading input json file: nishen%s' % opts.input_json)
         self.input_info_json = json.load(open(self.opts.input_json))
         self.index_to_word = self.input_info_json['index_to_word']
         if opts.mode == 'train':

@@ -38,6 +38,7 @@ def train(opts):
     logging.info("STAGE 0: Loading data")
     logging.info("Loading data")
     loader = DataLoader(opts)
+    logging.info("Dataset used: %s" % opts.dataset)
     logging.info("Load data complete")
     opts.vocabulary_size = loader.get_vocab_size()
     opts.max_caption_length = loader.max_caption_length
@@ -241,7 +242,6 @@ def train(opts):
                 logging.info("Start validation")
                 # eval model
                 eval_kwargs = {'split': 'val',
-                               'dataset': opts.input_json,
                                'stage': 1}
                 eval_kwargs.update(vars(opts))
 
@@ -320,7 +320,6 @@ def train(opts):
                 logging.info("Start validation")
                 # eval model
                 eval_kwargs = {'split': 'val',
-                               'dataset': opts.input_json,
                                'stage': 1}
                 eval_kwargs.update(vars(opts))
 
@@ -465,7 +464,7 @@ def train(opts):
         file_memory = h5py.File(os.path.join(directory_memory, 'memory_' + opts.train_id + '.h5'), 'w')
         # for i in range(opts.nouns_size):
         #     file_memory.create_dataset(str(i), data=memory[i], dtype="float32")
-        file_memory .create_dataset("memory", data=memory, dtype="float32")
+        file_memory.create_dataset("memory", data=memory, dtype="float32")
         file_memory.close()
         logging.info("Write memory complete")
 
@@ -523,6 +522,9 @@ def train(opts):
             # print(memory)
             # print(type(memory))
             model.module.set_memory(memory)
+
+        if opts.reset_bestscore == 1:
+            best_val_score = None
 
         logging.info("Start training")
         model.module.memory_ready()
@@ -667,7 +669,6 @@ def train(opts):
                 logging.info("Start validation")
                 # eval model
                 eval_kwargs = {'split': 'val',
-                               'dataset': opts.input_json,
                                'stage': 3}
                 eval_kwargs.update(vars(opts))
 
@@ -746,7 +747,6 @@ def train(opts):
                 logging.info("Start validation")
                 # eval model
                 eval_kwargs = {'split': 'val',
-                               'dataset': opts.input_json,
                                'stage': 3}
                 eval_kwargs.update(vars(opts))
 

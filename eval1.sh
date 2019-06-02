@@ -7,7 +7,6 @@ python sct.py \
 -cuda 5 \
 -infopth data/best1/info_base_0521-best.pkl \
 -inmemh5 data/memory/memory_base_0521.h5 \
--injson data/sct_coco_20.json \
--s few-test \
+-s test \
 -met 1 \
 -laneval 1

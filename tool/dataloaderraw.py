@@ -1,13 +1,11 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import json
 import os
 import numpy as np
 import torch
 import skimage
 import skimage.io
+import logging
+import torch.nn as nn
 
 from torchvision import transforms as trn
 
@@ -28,25 +26,24 @@ class DataLoaderRaw():
         self.folder_path = opts.get('folder_path', '')
 
         self.batch_size = opts.get('batch_size', 1)
-        self.seq_per_img = 1
+        self.captions_per_image = 1
 
         # Load resnet
         self.cnn_model = opts.get('cnn_model', 'resnet101')
         self.my_resnet = getattr(utils.resnet, self.cnn_model)()
-        self.my_resnet.load_state_dict(torch.load('./data/imagenet_weights/' + self.cnn_model + '.pth'))
-        self.my_resnet = my_resnet(self.my_resnet)
+        self.my_resnet.load_state_dict(torch.load('./data/models/' + self.cnn_model + '.pth'))
+        self.my_resnet = nn.DataParallel(my_resnet(self.my_resnet))
         self.my_resnet.cuda()
         self.my_resnet.eval()
 
         # load the json file which contains additional information about the dataset
-        print('DataLoaderRaw loading images from folder: ', self.folder_path)
+        logging.info('DataLoaderRaw loading images from folder: %s' % self.folder_path)
 
         self.files = []
         self.ids = []
 
-        print(len(self.coco_json))
         if len(self.coco_json) > 0:
-            print('reading from ' + opts.coco_json)
+            logging.info('reading from ' + opts.coco_json)
             # read in filenames from the coco-style json file
             self.coco_annotation = json.load(open(self.coco_json))
             for k, v in enumerate(self.coco_annotation['images']):
@@ -55,7 +52,7 @@ class DataLoaderRaw():
                 self.ids.append(v['id'])
         else:
             # read in all the filenames from the folder
-            print('listing all images in directory ' + self.folder_path)
+            logging.info('listing all images in directory ' + self.folder_path)
 
             def isImage(f):
                 supportedExt = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM']
@@ -75,7 +72,7 @@ class DataLoaderRaw():
                         n = n + 1
 
         self.N = len(self.files)
-        print('DataLoaderRaw found ', self.N, ' images')
+        logging.info('DataLoaderRaw found %d images' % self.N)
 
         self.iterator = 0
 
@@ -108,6 +105,7 @@ class DataLoaderRaw():
             img = torch.from_numpy(img.transpose([2, 0, 1])).cuda()
             img = preprocess(img)
             with torch.no_grad():
+                img = img.unsqueeze(0)
                 tmp_fc, tmp_att = self.my_resnet(img)
 
             fc_batch[i] = tmp_fc.data.cpu().float().numpy()
@@ -123,7 +121,7 @@ class DataLoaderRaw():
         data['att_feats'] = att_batch.reshape(batch_size, -1, 2048)
         data['att_masks'] = None
         data['bounds'] = {'it_pos_now': self.iterator, 'it_max': self.N, 'wrapped': wrapped}
-        data['infos'] = infos
+        data['info'] = infos
 
         return data
 
@@ -131,7 +129,7 @@ class DataLoaderRaw():
         self.iterator = 0
 
     def get_vocab_size(self):
-        return len(self.ix_to_word)
+        return len(self.index_to_word)
 
     def get_vocab(self):
-        return self.ix_to_word
+        return self.index_to_word

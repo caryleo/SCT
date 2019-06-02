@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
 python sct.py \
 -m train \
--id base_0425_8k \
+-id base_0530_8k \
 -model base \
--cuda 3 \
--injson data/sct_caps2idx_8k.json \
+-cuda 5 \
+-injson data/sct_flickr8k_50.json \
 -infeatdir data/features_8k_14 \
--incaph5 data/sct_caps_8k.h5 \
+-incaph5 data/sct_flickr8k_50.h5 \
 -outmemdir data/memory \
--inmemh5 data/memory/memory_base_0425_8k.h5 \
--tm 2 \
--tdir log/base_0425_8k \
--chkpt log/base_0425_8k \
+-inmemh5 data/memory/memory_base_0530_8k.h5 \
+-tm 1 \
+-tdir log/base_0530_8k \
+-chkpt log/base_0530_8k \
 -laneval 1 \
--batch 128 \
--batch3 32 \
--savechkpteve 500 \
--savechkpteve3 1000 \
--epo 20 \
--start log/base_0425_8k
+-batch 64 \
+-batch3 16 \
+-savechkpteve 125 \
+-savechkpteve3 500 \
+-epo 75 \
+-epo3 60 \
+-best1 data/best1 \
+-best3 data/best3 \
+-lr 5e-5 \
+-fusecoef 0.25 \
+-rebest 1 \
+-datas flickr8k

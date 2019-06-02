@@ -175,6 +175,17 @@ def parse_arg():
                         default=None,
                         help="Need a skip?, tell me where to get the model and info")
 
+    parser.add_argument('-datas', '--dataset',
+                        type=str,
+                        default='coco',
+                        choices=['coco', 'flickr8k', 'flickr30k'],
+                        help='which dataset is used?')
+
+    parser.add_argument('-rebest', '--reset_bestscore',
+                        type=int,
+                        default=0,
+                        help='reset the best score in stage 3')
+
     # model
     parser.add_argument('-model', '--caption_model',
                         type=str,
