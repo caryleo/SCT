@@ -119,6 +119,8 @@ def eval_split(model, crit, loader, eval_kwargs={}):
     logging.info("Dataset used: %s" % dataset)
     stage_id = eval_kwargs.get('stage', 0)
     metric = eval_kwargs.get('metric', 1)
+    logging.info("Evaluating stage: %d" % stage_id)
+    logging.info("Evaluating metric: %d" % metric)
 
     # Make sure in the evaluation mode
     model.eval()
@@ -165,6 +167,13 @@ def eval_split(model, crit, loader, eval_kwargs={}):
                data['att_feats'][np.arange(loader.batch_size) * loader.captions_per_image]]
         with torch.no_grad():
             tmp = [torch.from_numpy(_).cuda() for _ in tmp]
+            # print('ssssssssss', len(tmp), len(tmp[0][0]), len(tmp[1][0]), (tmp[0][0] > 0).sum())
+            # for _ in tmp[0]:
+            #     print((_ > 0).sum())
+            #
+            # for _ in tmp[1]:
+            #     print((_ > 0).sum())
+
             fc_feats, att_feats = tmp
             # forward the model to also get generated samples for each image 取样评估整体性能
             seq, _, _ = model.module.sample(fc_feats, att_feats, stage_id, eval_kwargs)

@@ -20,6 +20,7 @@ from tool.dataloader import DataLoader
 import models
 import utils.misc as misc
 import eval_utils as eval_utils
+import numpy as np
 
 try:
     import tensorflow as tf
@@ -521,6 +522,11 @@ def train(opts):
             memory = memory_h5['memory'][:, :]
             # print(memory)
             # print(type(memory))
+            # nan cases
+            for i in range(len(memory)):
+                for j in range(len(memory[i])):
+                    if np.isnan(memory[i][j]):
+                        memory[i][j] = 0
             model.module.set_memory(memory)
 
         if opts.reset_bestscore == 1:

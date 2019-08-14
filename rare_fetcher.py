@@ -30,7 +30,7 @@ for image in file['images']:
 len_out = len(outs)
 print(len_out)
 
-for i in range(50):
+for i in range(20):
     index = random.randint(0, len_out)
     out = outs[index]
     print(i, out)

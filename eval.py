@@ -36,8 +36,16 @@ def evaluation(opts):
         info = cPickle.load(info_file)
 
     if opts.eval_mode == 3:
+        logging.info("Founding memory...")
         memory_h5 = h5py.File(opts.input_memory_h5, 'r', driver='core')
+        # print(np.max(memory_h5['memory']), np.min(memory_h5['memory']))
         memory = memory_h5['memory'][:, :]
+        for i in range(len(memory)):
+            for j in range(len(memory[i])):
+                if np.isnan(memory[i][j]):
+                    memory[i][j] = 0
+
+        # print(memory[:][5])
 
     vars(opts).update({'stage': opts.eval_mode})
     opts.caption_model = info['opts'].caption_model
@@ -81,15 +89,18 @@ def evaluation(opts):
     # Setup the model
     model = models.setup(opts)
     model.load_state_dict(torch.load(opts.model_path))
+    # print(model.state_dict())
     model = nn.DataParallel(model)
     model.cuda()
+    # print(model.state_dict())
     for parameter in model.parameters():
         if parameter is not None:
             parameter.cuda()
 
-    model.eval()
+    # model.eval()
     if opts.eval_mode == 3:
         logging.info("STAGE 3, Loading memory")
+        # print(np.max(memory), np.min(memory))
         model.module.set_memory(memory)
         model.module.memory_ready()
 

@@ -67,6 +67,7 @@ class BaseModel(nn.Module):
         return self.core.memory_finish()
 
     def set_memory(self, memory):
+        # print(np.max(memory), np.min(memory))
         self.core.set_memory(memory)
 
     def forward(self, fc_feats, att_feats, captions, stage_id):
@@ -235,16 +236,20 @@ class BaseModel(nn.Module):
             elif sample_max:  # 其他情况下，贪婪编码，去最大概率即可
                 sampleLogprobs, it = torch.max(logprobs.data, 1)
                 it = it.view(-1).long()
+                # print(logprobs.data)
             else:  # 依照概率取样
                 if temperature == 1.0:
                     prob_prev = torch.exp(logprobs.data).cpu()  # fetch prev distribution: shape Nx(M+1)
+
                 else:
                     # scale logprobs by temperature
                     prob_prev = torch.exp(torch.div(logprobs.data, temperature)).cpu()
                 it = torch.multinomial(prob_prev, 1).cuda()
                 sampleLogprobs = logprobs.gather(1, it)  # gather the logprobs at sampled positions
                 it = it.view(-1).long()  # and flatten indices for downstream processing
+
             # 作为下一个时间点的输入
+
             it.requires_grad = False
             xt = self.word_embed(it) # 取前一个的采样结果作为输入
 
@@ -252,6 +257,7 @@ class BaseModel(nn.Module):
                 # stop when all finished
                 if t == 1:
                     unfinished = it > 0
+                    # print(it)
                 else:
                     unfinished = unfinished * (it > 0)
 
@@ -264,7 +270,10 @@ class BaseModel(nn.Module):
                 rel_ress.append(rel_res)
 
             output, state, rel_res = self.core(it, xt, fc_feats, att_feats, p_att_feats, state, stage_id)
+            # print(torch.max(rel_res), torch.min(rel_res))
+            # print(output)
             LMvocab = self.logit(output)
+            #print(LMvocab)
             if stage_id == 1 or stage_id == 2:
                 # 只使用语言模型输出
                 output = LMvocab
@@ -275,13 +284,17 @@ class BaseModel(nn.Module):
                 rel = torch.cat((rel_zero, rel_res, rel_others), 1)
 
                 output = self.fuse_coefficient * LMvocab + (1 - self.fuse_coefficient) * rel
+                # print(torch.max(output), torch.min(output))
+                # print(torch.max(LMvocab), torch.min(LMvocab))
+                # print(torch.max(rel), torch.min(rel))
 
             logprobs = F.log_softmax(output, 1)
-
+            # print(logprobs)
         # return torch.cat([_.unsqueeze(1) for _ in seq], 1), torch.cat([_.unsqueeze(1) for _ in seqLogprobs], 1)
         if stage_id == 1 or stage_id == 2:
             return torch.cat([_.unsqueeze(1) for _ in seq], 1), torch.cat([_.unsqueeze(1) for _ in seqLogprobs], 1), None
         else:
+            # print(len(seq), len(seqLogprobs), len(rel))
             return torch.cat([_.unsqueeze(1) for _ in seq], 1), torch.cat([_.unsqueeze(1) for _ in seqLogprobs], 1), torch.cat([_.unsqueeze(1) for _ in rel_ress], 1)
 
     def beam_search(self, state, logprobs, *args, **kwargs):
@@ -450,7 +463,9 @@ class BaseCore(nn.Module):
             rel_res = None
         else:
             # 第三阶段，使用两个网络的模型输出，这里使用一个linear fuse（限名词）
+            # print(torch.max(att_res), torch.min(att_res))
             rel_res = self.relation(att_res, stage_id)  # 关系网络结果，batch * nouns_size 64 * 7668
+            # print(torch.max(rel_res), torch.min(rel_res))
 
         state = (next_h.unsqueeze(0), next_c.unsqueeze(0))
         return output, state, rel_res
@@ -465,6 +480,7 @@ class BaseCore(nn.Module):
         return self.memory.get_memory()
 
     def set_memory(self, memory):
+        # print(np.max(memory), np.min(memory))
         self.memory.set_memory(memory)
 
 
@@ -525,8 +541,13 @@ class BaseRelation(nn.Module):
 
     def forward(self, att_res, stage_id):
         batch_size = att_res.size(0)  # batch
+        # print(torch.max(self.nouns_memory), torch.min(self.nouns_memory))
         memory_pre = self.pre_fc(self.nouns_memory.cuda())  # 处理所有类别的记忆表示 nouns_size * pre_fc_size 7668 * 128
+        # print((memory_pre > 0).sum(), memory_pre)
+        # print(torch.max(memory_pre), torch.min(memory_pre))
         att_pre = self.pre_fc(att_res)  # 处理输入的注意力表示 batch * pre_fc_size 64 * 128
+        #  print((att_pre > 0).sum(), att_pre)
+        # print(torch.max(att_pre), torch.min(att_pre))
 
         memory_pre_ext = memory_pre.unsqueeze(0).repeat(batch_size, 1,
                                                         1)  # 在最外一维复制batch倍 batch*nouns_size*pre_fc 64*7668*128
@@ -541,7 +562,9 @@ class BaseRelation(nn.Module):
         return relations
 
     def set_memory(self, memory):
+        # print(torch.max(memory), torch.min(memory))
         self.nouns_memory = memory[1:, :]
+        # print(self.nouns_memory[2][:])
         self.nouns_memory.cuda()
 
 
@@ -571,11 +594,27 @@ class BaseMemory(nn.Module):
 
     def get_memory(self):
         # 返回所有类别
+        # print(np.max(self.nouns_memory), np.min(self.nouns_memory))
         return self.nouns_memory
 
     def finish(self):
+        print("@@@@@DEBUG@@@@@")
+        file = open('./TESTTESTTEST', 'w')
+        for i in range(self.nouns_size + 1):
+            temp = str(i) + '\t' + str(self.nouns_counter[i]) + '\t' + str(self.nouns_memory[i].tolist())
+            file.write(temp)
         # 整理所有的记忆，计算算数均值
         self.nouns_memory = self.nouns_memory / self.nouns_counter
+        print("@@@@@DEBUG@@@@@")
+        file.write('\n\n')
+        for i in range(self.nouns_size + 1):
+            temp = str(i) + '\t' + str(self.nouns_counter[i]) + '\t' + str(self.nouns_memory[i].tolist())
+            file.write(temp)
+
+        file.close()
+
+
 
     def set_memory(self, memory):
+        # print(np.max(memory), np.min(memory))
         self.nouns_memory = self.nouns_memory + memory
