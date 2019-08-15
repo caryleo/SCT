@@ -168,11 +168,11 @@ def eval_split(model, crit, loader, eval_kwargs={}):
         with torch.no_grad():
             tmp = [torch.from_numpy(_).cuda() for _ in tmp]
             # print('ssssssssss', len(tmp), len(tmp[0][0]), len(tmp[1][0]), (tmp[0][0] > 0).sum())
-            # for _ in tmp[0]:
-            #     print((_ > 0).sum())
-            #
-            # for _ in tmp[1]:
-            #     print((_ > 0).sum())
+            for _ in tmp[0]:
+                print((_ > 0).sum())
+
+            for _ in tmp[1]:
+                print((_ > 0).sum())
 
             fc_feats, att_feats = tmp
             # forward the model to also get generated samples for each image 取样评估整体性能

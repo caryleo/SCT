@@ -471,7 +471,14 @@ class BaseCore(nn.Module):
         return output, state, rel_res
 
     def memory_ready(self):
-        memory = torch.from_numpy(self.memory.get_memory()).cuda().float()
+        memory = self.memory.get_memory()
+        # for i in range(len(memory)):
+        #     for j in range(len(memory[i])):
+        #         if np.isnan(memory[i][j]):
+        #             memory[i][j] = 0
+        memory = torch.from_numpy(memory).cuda().float()
+
+
         self.relation.set_memory(memory)
 
     def memory_finish(self):
